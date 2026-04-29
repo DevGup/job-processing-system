@@ -30,7 +30,7 @@ public class JobWorker {
             job.setStatus(JobStatus.PROCESSING);
             jobRepository.save(job);
 
-            log.info("Job {} status updated to PROCESSING", job.getId());
+          
 
             // simulate work
             Thread.sleep(10000);
@@ -39,7 +39,7 @@ public class JobWorker {
             job.setStatus(JobStatus.DONE);
             jobRepository.save(job);
 
-            log.info("Job {} completed successfully", job.getId());
+       
 
         } 
         catch (InterruptedException e) {

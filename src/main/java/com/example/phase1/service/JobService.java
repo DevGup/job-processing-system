@@ -23,7 +23,7 @@ public class JobService {
     public Job createJob(String type, Long userId) {
 
         Job job = new Job();
-        job.setUserId(userId); // set userId from context or parameter
+        job.setUserId(userId); 
         job.setType(type);
         job.setStatus(JobStatus.PENDING);
         job.setCreatedAt(LocalDateTime.now());
@@ -45,14 +45,10 @@ public class JobService {
         Job job = jobRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Job not found"));
 
-        log.info("Job {} found with status {}", id, job.getStatus());
-
         return job;
     }
 
     public void deleteJob(Long id) {
-
-        log.info("Deleting job with id {}", id);
 
         Job job = jobRepository.findById(id)
                 .orElseThrow(() -> {
@@ -62,7 +58,7 @@ public class JobService {
 
         jobRepository.delete(job);
 
-        log.info("Job {} deleted successfully", id);
+        
     }
 
     public Job updateJobStatus(Long jobId, JobStatus status) {
