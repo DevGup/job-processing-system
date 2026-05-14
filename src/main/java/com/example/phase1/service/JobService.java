@@ -7,6 +7,7 @@ import com.example.phase1.repo.JobRepository;
 import lombok.RequiredArgsConstructor;
 
 import org.slf4j.LoggerFactory;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 
@@ -17,8 +18,8 @@ import java.time.LocalDateTime;
 public class JobService {
 
     private final JobRepository jobRepository;
-    private final JobWorker jobWorker;
     private static final Logger log = LoggerFactory.getLogger(JobService.class);
+    private final KafkaTemplate<String, String> kafkaTemplate;
 
     public Job createJob(String type, Long userId) {
 
@@ -32,8 +33,9 @@ public class JobService {
 
         // send to worker
         log.info("Job {} created with status {}", savedJob.getId(), savedJob.getStatus());
+        log.info("Sending job {} to Kafka", savedJob.getId());
 
-        jobWorker.processJob(savedJob);
+        kafkaTemplate.send("job-requests", savedJob.getId().toString());
 
         return savedJob;
     }
