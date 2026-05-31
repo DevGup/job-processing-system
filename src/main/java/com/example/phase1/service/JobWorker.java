@@ -21,13 +21,12 @@ public class JobWorker {
     private static final int MAX_RETRIES = 3;
 
     public void processJob(Long jobId) {
+        Job job = jobRepository.findById(jobId).orElse(null);
+        if (job == null) {
+            log.warn("Job {} not found in database", jobId);
+            return;
+        }
         try {
-
-            Job job = jobRepository.findById(jobId).orElseThrow();
-            if (job == null) {
-                log.warn("Job {} not found in database", jobId);
-                return;
-            }
 
             Thread.sleep(2000);
 
@@ -44,9 +43,7 @@ public class JobWorker {
 
         } catch (Exception e) {
 
-            Job job = jobRepository.findById(jobId).orElseThrow();
-
-            
+            log.error("Error processing job {}", jobId, e);
 
             if (job.getRetryCount() < MAX_RETRIES) {
                 job.setRetryCount(job.getRetryCount() + 1);
