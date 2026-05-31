@@ -28,15 +28,10 @@ public class JobService {
         job.setType(type);
         job.setStatus(JobStatus.PENDING);
         job.setCreatedAt(LocalDateTime.now());
-
+        job.setRetryCount(0);
         Job savedJob = jobRepository.save(job);
-
-        // send to worker
-        log.info("Job {} created with status {}", savedJob.getId(), savedJob.getStatus());
-        log.info("Sending job {} to Kafka", savedJob.getId());
-
         kafkaTemplate.send("job-requests", savedJob.getId().toString());
-
+        
         return savedJob;
     }
 

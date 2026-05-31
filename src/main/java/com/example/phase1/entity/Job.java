@@ -9,6 +9,8 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@Getter
+@Setter
 
 public class Job {
     @Id
@@ -23,4 +25,7 @@ public class Job {
      private JobStatus status;
 
     private LocalDateTime createdAt;
+    private Integer retryCount = 0;
+    
+   
 }

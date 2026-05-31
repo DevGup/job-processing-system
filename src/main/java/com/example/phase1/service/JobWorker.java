@@ -7,6 +7,7 @@ import com.example.phase1.entity.Job;
 import com.example.phase1.entity.JobStatus;
 import com.example.phase1.repo.JobRepository;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.core.KafkaTemplate;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 
@@ -15,12 +16,18 @@ import org.slf4j.Logger;
 public class JobWorker {
 
     private final JobRepository jobRepository;
+    private final KafkaTemplate<String, String> kafkaTemplate;
     private static final Logger log = LoggerFactory.getLogger(JobWorker.class);
+    private static final int MAX_RETRIES = 3;
 
     public void processJob(Long jobId) {
         try {
 
             Job job = jobRepository.findById(jobId).orElseThrow();
+            if (job == null) {
+                log.warn("Job {} not found in database", jobId);
+                return;
+            }
 
             Thread.sleep(2000);
 
@@ -29,25 +36,42 @@ public class JobWorker {
 
             Thread.sleep(10000);
 
+            if ("fail".equalsIgnoreCase(job.getType())) {
+                throw new RuntimeException("Simulated job failure");
+            }
             job.setStatus(JobStatus.DONE);
             jobRepository.save(job);
 
         } catch (Exception e) {
-            log.error("Error processing job {}", jobId, e);
 
             Job job = jobRepository.findById(jobId).orElseThrow();
-            job.setStatus(JobStatus.FAILED);
-            jobRepository.save(job);
-        }
 
+            
+
+            if (job.getRetryCount() < MAX_RETRIES) {
+                job.setRetryCount(job.getRetryCount() + 1);
+                job.setStatus(JobStatus.PENDING);
+                jobRepository.save(job);
+                kafkaTemplate.send("job-requests", jobId.toString());
+            } else {
+                job.setStatus(JobStatus.FAILED);
+                jobRepository.save(job);
+                log.error("Job {} reached max retry limit. Marking as FAILED.", jobId);
+            }
+
+        }
     }
 
     @KafkaListener(topics = "job-requests", groupId = "job-worker-group")
     public void consume(String jobId) {
         try {
-            Thread.sleep(30000); // simulate delay
 
-            log.info("Received job {} from Kafka", jobId);
+            log.info(
+                    "Thread {} received Job {}",
+                    Thread.currentThread().getName(),
+                    jobId);
+
+            Thread.sleep(30000); // simulate delay
 
             processJob(Long.parseLong(jobId));
 
