@@ -10,4 +10,5 @@ import com.example.phase1.entity.JobStatus;
 public interface JobRepository extends JpaRepository<Job, Long> {
 
     List<Job> findByStatusIn(List<JobStatus> statuses);
+    List<Job> findByStatus(JobStatus status);
 }

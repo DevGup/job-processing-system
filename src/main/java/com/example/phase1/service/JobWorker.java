@@ -44,7 +44,7 @@ public class JobWorker {
         } catch (Exception e) {
 
             log.error("Error processing job {}", jobId, e);
-
+            job.setFailureReason(e.getMessage());
             if (job.getRetryCount() < MAX_RETRIES) {
                 job.setRetryCount(job.getRetryCount() + 1);
                 job.setStatus(JobStatus.PENDING);
@@ -52,6 +52,7 @@ public class JobWorker {
                 kafkaTemplate.send("job-requests", jobId.toString());
             } else {
                 job.setStatus(JobStatus.FAILED);
+                job.setFailureReason(e.getMessage());
                 jobRepository.save(job);
 
                 kafkaTemplate.send("job-dlq",jobId.toString());

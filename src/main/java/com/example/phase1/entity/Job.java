@@ -25,7 +25,11 @@ public class Job {
      private JobStatus status;
 
     private LocalDateTime createdAt;
+
     private Integer retryCount = 0;
     
+    private String failureReason;
+
+    private LocalDateTime failedAt;
    
 }

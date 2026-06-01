@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -29,6 +30,7 @@ public class JobService {
         job.setStatus(JobStatus.PENDING);
         job.setCreatedAt(LocalDateTime.now());
         job.setRetryCount(0);
+        job.setFailedAt(LocalDateTime.now());
         Job savedJob = jobRepository.save(job);
         kafkaTemplate.send("job-requests", savedJob.getId().toString());
 
@@ -86,5 +88,16 @@ public class JobService {
                 jobId.toString());
 
         return "Job re-submitted successfully";
+    }
+
+    public List<Job> getFailedJobs() {
+
+        return jobRepository.findByStatus(
+                JobStatus.FAILED);
+    }
+
+    public List<Job> getAllJobs() {
+        
+        return jobRepository.findAll();
     }
 }

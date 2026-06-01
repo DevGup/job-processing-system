@@ -1,5 +1,7 @@
 package com.example.phase1.controller;
 
+import java.util.List;
+
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -30,6 +32,13 @@ public class JobController {
                 jobService.retryDlq(id));
     }
 
+    @GetMapping("/failed")
+    public ResponseEntity<List<Job>> getFailedJobs() {
+
+        return ResponseEntity.ok(
+                jobService.getFailedJobs());
+    }
+
     @GetMapping("/{id}")
     public Job getJob(@PathVariable Long id) {
         return jobService.getJob(id);
@@ -47,4 +56,11 @@ public class JobController {
 
         return jobService.updateJobStatus(id, status);
     }
+
+    @GetMapping
+    public List<Job> getAllJobs() {
+        return jobService.getAllJobs();
+    }
+
+   
 }
