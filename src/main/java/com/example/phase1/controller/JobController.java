@@ -1,5 +1,6 @@
 package com.example.phase1.controller;
 
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import com.example.phase1.dto.JobRequest;
@@ -21,6 +22,12 @@ public class JobController {
     @PostMapping
     public Job createJob(@RequestBody JobRequest request) {
         return jobService.createJob(request.getType(), request.getUserId());
+    }
+
+    @PostMapping("/retry-dlq/{id}")
+    public ResponseEntity<String> retryDlq(@PathVariable Long id) {
+        return ResponseEntity.ok(
+                jobService.retryDlq(id));
     }
 
     @GetMapping("/{id}")

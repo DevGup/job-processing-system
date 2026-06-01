@@ -24,14 +24,14 @@ public class JobService {
     public Job createJob(String type, Long userId) {
 
         Job job = new Job();
-        job.setUserId(userId); 
+        job.setUserId(userId);
         job.setType(type);
         job.setStatus(JobStatus.PENDING);
         job.setCreatedAt(LocalDateTime.now());
         job.setRetryCount(0);
         Job savedJob = jobRepository.save(job);
         kafkaTemplate.send("job-requests", savedJob.getId().toString());
-        
+
         return savedJob;
     }
 
@@ -55,7 +55,6 @@ public class JobService {
 
         jobRepository.delete(job);
 
-        
     }
 
     public Job updateJobStatus(Long jobId, JobStatus status) {
@@ -70,5 +69,22 @@ public class JobService {
         log.info("Job {} status updated successfully to {}", jobId, status);
 
         return updatedJob;
+    }
+
+    public String retryDlq(Long jobId) {
+
+        Job job = jobRepository.findById(jobId)
+                .orElseThrow(() -> new RuntimeException("Job not found"));
+
+        job.setRetryCount(0);
+        job.setStatus(JobStatus.PENDING);
+
+        jobRepository.save(job);
+
+        kafkaTemplate.send(
+                "job-requests",
+                jobId.toString());
+
+        return "Job re-submitted successfully";
     }
 }

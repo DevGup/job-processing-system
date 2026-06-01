@@ -53,7 +53,10 @@ public class JobWorker {
             } else {
                 job.setStatus(JobStatus.FAILED);
                 jobRepository.save(job);
-                log.error("Job {} reached max retry limit. Marking as FAILED.", jobId);
+
+                kafkaTemplate.send("job-dlq",jobId.toString());
+
+                log.error("Job {} sent to DLQ after {} retries",jobId,MAX_RETRIES);
             }
 
         }
