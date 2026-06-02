@@ -21,6 +21,7 @@ public class JobService {
     private final JobRepository jobRepository;
     private static final Logger log = LoggerFactory.getLogger(JobService.class);
     private final KafkaTemplate<String, String> kafkaTemplate;
+    private final MetricsService metricsService;
 
     public Job createJob(String type, Long userId) {
 
@@ -32,6 +33,8 @@ public class JobService {
         job.setRetryCount(0);
         job.setFailedAt(LocalDateTime.now());
         Job savedJob = jobRepository.save(job);
+        metricsService.incrementJobsCreated();
+        
         kafkaTemplate.send("job-requests", savedJob.getId().toString());
 
         return savedJob;

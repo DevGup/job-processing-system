@@ -19,6 +19,7 @@ public class JobWorker {
     private final KafkaTemplate<String, String> kafkaTemplate;
     private static final Logger log = LoggerFactory.getLogger(JobWorker.class);
     private static final int MAX_RETRIES = 3;
+    private final MetricsService metricsService;
 
     public void processJob(Long jobId) {
         Job job = jobRepository.findById(jobId).orElse(null);
@@ -32,6 +33,7 @@ public class JobWorker {
 
             job.setStatus(JobStatus.PROCESSING);
             jobRepository.save(job);
+            metricsService.incrementJobsProcessed();
 
             Thread.sleep(10000);
 
@@ -54,8 +56,9 @@ public class JobWorker {
                 job.setStatus(JobStatus.FAILED);
                 job.setFailureReason(e.getMessage());
                 jobRepository.save(job);
-
+                metricsService.incrementJobsFailed();
                 kafkaTemplate.send("job-dlq",jobId.toString());
+                metricsService.incrementJobsDlq();
 
                 log.error("Job {} sent to DLQ after {} retries",jobId,MAX_RETRIES);
             }
