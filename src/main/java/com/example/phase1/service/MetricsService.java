@@ -1,6 +1,9 @@
 package com.example.phase1.service;
 
 import org.springframework.stereotype.Service;
+import io.micrometer.core.instrument.Gauge;
+import com.example.phase1.entity.JobStatus;
+import com.example.phase1.repo.JobRepository;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -13,27 +16,42 @@ public class MetricsService {
     private final Counter jobsFailed;
     private final Counter jobsDlq;
 
-    public MetricsService(MeterRegistry meterRegistry) {
+    public MetricsService(MeterRegistry meterRegistry, JobRepository jobRepository) {
 
-        this.jobsCreated =
-                Counter.builder("jobs_created_total")
-                        .description("Total jobs created")
-                        .register(meterRegistry);
+        this.jobsCreated = Counter.builder("jobs_created_total")
+                .description("Total jobs created")
+                .register(meterRegistry);
 
-        this.jobsProcessed =
-                Counter.builder("jobs_processed_total")
-                        .description("Total jobs processed")
-                        .register(meterRegistry);
+        this.jobsProcessed = Counter.builder("jobs_processed_total")
+                .description("Total jobs processed")
+                .register(meterRegistry);
 
-        this.jobsFailed =
-                Counter.builder("jobs_failed_total")
-                        .description("Total jobs failed")
-                        .register(meterRegistry);
+        this.jobsFailed = Counter.builder("jobs_failed_total")
+                .description("Total jobs failed")
+                .register(meterRegistry);
 
-        this.jobsDlq =
-                Counter.builder("jobs_dlq_total")
-                        .description("Total jobs sent to DLQ")
-                        .register(meterRegistry);
+        this.jobsDlq = Counter.builder("jobs_dlq_total")
+                .description("Total jobs sent to DLQ")
+                .register(meterRegistry);
+
+        Gauge.builder(
+                "jobs_done_db_count",
+                jobRepository,
+                repo -> repo.countByStatus(JobStatus.DONE))
+                .register(meterRegistry);
+
+        Gauge.builder(
+                "jobs_failed_db_count",
+                jobRepository,
+                repo -> repo.countByStatus(JobStatus.FAILED))
+                .register(meterRegistry);
+
+        Gauge.builder(
+                "jobs_total_db_count",
+                jobRepository,
+                JobRepository::count)
+                .register(meterRegistry);
+
     }
 
     public void incrementJobsCreated() {
@@ -51,4 +69,5 @@ public class MetricsService {
     public void incrementJobsDlq() {
         jobsDlq.increment();
     }
+
 }

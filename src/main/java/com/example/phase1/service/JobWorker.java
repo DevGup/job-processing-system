@@ -9,6 +9,9 @@ import com.example.phase1.repo.JobRepository;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
 import lombok.RequiredArgsConstructor;
+
+import java.time.LocalDateTime;
+
 import org.slf4j.Logger;
 
 @Service
@@ -55,6 +58,7 @@ public class JobWorker {
             } else {
                 job.setStatus(JobStatus.FAILED);
                 job.setFailureReason(e.getMessage());
+                job.setFailedAt(LocalDateTime.now());
                 jobRepository.save(job);
                 metricsService.incrementJobsFailed();
                 kafkaTemplate.send("job-dlq",jobId.toString());

@@ -31,7 +31,8 @@ public class JobService {
         job.setStatus(JobStatus.PENDING);
         job.setCreatedAt(LocalDateTime.now());
         job.setRetryCount(0);
-        job.setFailedAt(LocalDateTime.now());
+        job.setFailedAt(null);
+        job.setFailureReason(null);
         Job savedJob = jobRepository.save(job);
         metricsService.incrementJobsCreated();
         
