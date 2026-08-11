@@ -8,10 +8,10 @@ import org.springframework.scheduling.annotation.EnableAsync;
 @EnableKafka
 @SpringBootApplication
 @EnableAsync
-public class Phase1Application {
+public class JobApplication  {
 
     public static void main(String[] args) {
-        SpringApplication.run(Phase1Application.class, args);
+        SpringApplication.run(JobApplication .class, args);
 
        
     }
