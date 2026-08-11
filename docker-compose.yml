@@ -17,9 +17,11 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    volumes:
+      - kafka-storage:/var/lib/kafka/data
 
   prometheus:
     image: prom/prometheus
@@ -28,6 +30,7 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-storage:/prometheus
 
   grafana:
     image: grafana/grafana
@@ -36,3 +39,33 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
+    volumes:
+      - grafana-storage:/var/lib/grafana
+  
+  springboot:
+    build: .
+    container_name: springboot
+    ports:
+      - "8080:8080"
+    depends_on:
+      - kafka
+      - mysql
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: jobdb
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-storage:/var/lib/mysql
+
+volumes:
+  kafka-storage:
+  grafana-storage:
+  prometheus-storage:
+  mysql-storage:
+
+
