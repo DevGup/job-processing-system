@@ -1,15 +1,15 @@
-package com.example.phase1.controller;
+package com.example.Job.controller;
 
 import java.util.List;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import com.example.phase1.dto.JobRequest;
-import com.example.phase1.dto.JobStatusUpdateRequest;
-import com.example.phase1.entity.Job;
-import com.example.phase1.entity.JobStatus;
-import com.example.phase1.service.JobService;
+import com.example.Job.dto.JobRequest;
+import com.example.Job.dto.JobStatusUpdateRequest;
+import com.example.Job.entity.Job;
+import com.example.Job.entity.JobStatus;
+import com.example.Job.service.JobService;
 
 @RestController
 @RequestMapping("/jobs")

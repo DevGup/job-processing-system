@@ -1,4 +1,4 @@
-package com.example.phase1;
+package com.example.Job;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

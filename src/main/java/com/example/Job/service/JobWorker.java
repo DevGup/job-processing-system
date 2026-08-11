@@ -1,11 +1,12 @@
-package com.example.phase1.service;
+package com.example.Job.service;
 
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import com.example.phase1.entity.Job;
-import com.example.phase1.entity.JobStatus;
-import com.example.phase1.repo.JobRepository;
+import com.example.Job.entity.Job;
+import com.example.Job.entity.JobStatus;
+import com.example.Job.repo.JobRepository;
+
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
 import lombok.RequiredArgsConstructor;

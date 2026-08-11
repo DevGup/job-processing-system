@@ -1,4 +1,4 @@
-package com.example.phase1.entity;
+package com.example.Job.entity;
 
 import jakarta.persistence.*;
 import lombok.*;

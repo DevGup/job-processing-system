@@ -1,4 +1,4 @@
-package com.example.phase1.dto;
+package com.example.Job.dto;
 
 import lombok.Data;
 

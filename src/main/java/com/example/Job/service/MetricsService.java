@@ -1,10 +1,11 @@
-package com.example.phase1.service;
+package com.example.Job.service;
 
 import org.springframework.stereotype.Service;
-import io.micrometer.core.instrument.Gauge;
-import com.example.phase1.entity.JobStatus;
-import com.example.phase1.repo.JobRepository;
 
+import com.example.Job.entity.JobStatus;
+import com.example.Job.repo.JobRepository;
+
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 

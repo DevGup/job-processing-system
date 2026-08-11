@@ -1,11 +1,12 @@
-package com.example.phase1.repo;
+package com.example.Job.repo;
 
 
 import java.util.List;
 
 import org.springframework.data.jpa.repository.JpaRepository;
-import com.example.phase1.entity.Job;
-import com.example.phase1.entity.JobStatus;
+
+import com.example.Job.entity.Job;
+import com.example.Job.entity.JobStatus;
 
 public interface JobRepository extends JpaRepository<Job, Long> {
 

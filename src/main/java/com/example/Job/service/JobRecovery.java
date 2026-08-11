@@ -1,4 +1,4 @@
-package com.example.phase1.service;
+package com.example.Job.service;
 
 import java.util.List;
 
@@ -7,9 +7,9 @@ import org.springframework.context.event.EventListener;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
-import com.example.phase1.entity.Job;
-import com.example.phase1.entity.JobStatus;
-import com.example.phase1.repo.JobRepository;
+import com.example.Job.entity.Job;
+import com.example.Job.entity.JobStatus;
+import com.example.Job.repo.JobRepository;
 
 import lombok.RequiredArgsConstructor;
 
