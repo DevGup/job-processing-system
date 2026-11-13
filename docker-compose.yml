@@ -1,68 +1,125 @@
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
-    container_name: zookeeper
+    restart: unless-stopped
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
-    ports:
-      - "2181:2181"
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-log:/var/lib/zookeeper/log
+    healthcheck:
+      test: ["CMD", "cub", "zk-ready", "127.0.0.1:2181", "5"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 10s
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
-    container_name: kafka
+    restart: unless-stopped
     depends_on:
-      - zookeeper
-    ports:
-      - "9092:9092"
+      zookeeper:
+        condition: service_healthy
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
     volumes:
       - kafka-storage:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "kafka:9092", "--list"]
+      interval: 10s
+      timeout: 30s
+      retries: 15
+      start_period: 30s
 
   prometheus:
-    image: prom/prometheus
-    container_name: prometheus
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
     ports:
-      - "9090:9090"
+      - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - type: bind
+        source: ./prometheus.yml
+        target: /etc/prometheus/prometheus.yml
+        read_only: true
+        bind:
+          create_host_path: false
       - prometheus-storage:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   grafana:
-    image: grafana/grafana
-    container_name: grafana
+    image: grafana/grafana:11.2.0
+    restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT:-3000}:3000"
     depends_on:
-      - prometheus
+      prometheus:
+        condition: service_healthy
     volumes:
       - grafana-storage:/var/lib/grafana
-  
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   springboot:
+    image: ${JOB_SCHEDULER_IMAGE:-job-scheduler:local}
     build: .
-    container_name: springboot
+    restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "${JOB_API_PORT:-8080}:8080"
     depends_on:
-      - kafka
-      - mysql
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-jobdb}
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-jobapp}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-jobapp-local-password}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      APP_KAFKA_CONCURRENCY: ${APP_KAFKA_CONCURRENCY:-3}
 
   mysql:
     image: mysql:8.0
-    container_name: mysql
+    restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: jobdb
-    ports:
-      - "3307:3306"
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-local-root-password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-jobdb}
+      MYSQL_USER: ${MYSQL_USER:-jobapp}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-jobapp-local-password}
     volumes:
       - mysql-storage:/var/lib/mysql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          MYSQL_PWD="$${MYSQL_PASSWORD}" mysql --protocol=TCP --host=127.0.0.1
+          --user="$${MYSQL_USER}" --database="$${MYSQL_DATABASE}" --execute="SELECT 1"
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
 
 volumes:
+  zookeeper-data:
+    name: ${ZOOKEEPER_DATA_VOLUME:-${COMPOSE_PROJECT_NAME}_zookeeper-data}
+    external: ${ZOOKEEPER_VOLUMES_EXTERNAL:-false}
+  zookeeper-log:
+    name: ${ZOOKEEPER_LOG_VOLUME:-${COMPOSE_PROJECT_NAME}_zookeeper-log}
+    external: ${ZOOKEEPER_VOLUMES_EXTERNAL:-false}
   kafka-storage:
   grafana-storage:
   prometheus-storage:

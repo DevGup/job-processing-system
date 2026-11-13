@@ -1,93 +1,47 @@
 package com.example.Job.service;
 
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-
-import com.example.Job.entity.Job;
-import com.example.Job.entity.JobStatus;
-import com.example.Job.repo.JobRepository;
-
 import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.kafka.core.KafkaTemplate;
 import lombok.RequiredArgsConstructor;
-
-import java.time.LocalDateTime;
-
-import org.slf4j.Logger;
+import lombok.extern.slf4j.Slf4j;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class JobWorker {
 
-    private final JobRepository jobRepository;
-    private final KafkaTemplate<String, String> kafkaTemplate;
-    private static final Logger log = LoggerFactory.getLogger(JobWorker.class);
-    private static final int MAX_RETRIES = 3;
-    private final MetricsService metricsService;
+    private final JobService jobService;
+    private final JobPublisher jobPublisher;
 
-    public void processJob(Long jobId) {
-        Job job = jobRepository.findById(jobId).orElse(null);
-        if (job == null) {
-            log.warn("Job {} not found in database", jobId);
+    @KafkaListener(topics = "${app.kafka.topics.requests}", groupId = "${app.kafka.consumer-group}")
+    public void consume(String payload) {
+        Long jobId;
+        try {
+            jobId = Long.parseLong(payload);
+        } catch (NumberFormatException exception) {
+            log.error("Discarding malformed job message: {}", payload);
             return;
         }
+
+        JobExecution job = jobService.claimJob(jobId);
+        if (job == null) {
+            log.info("Skipping job {} because it is no longer pending", jobId);
+            return;
+        }
+
         try {
-
-            Thread.sleep(2000);
-
-            job.setStatus(JobStatus.PROCESSING);
-            jobRepository.save(job);
-            metricsService.incrementJobsProcessed();
-
-            Thread.sleep(10000);
-
-            if ("fail".equalsIgnoreCase(job.getType())) {
-                throw new RuntimeException("Simulated job failure");
+            if ("fail".equalsIgnoreCase(job.type())) {
+                throw new IllegalStateException("Simulated job failure");
             }
-            job.setStatus(JobStatus.DONE);
-            jobRepository.save(job);
-
-        } catch (Exception e) {
-
-            log.error("Error processing job {}", jobId, e);
-            job.setFailureReason(e.getMessage());
-            if (job.getRetryCount() < MAX_RETRIES) {
-                job.setRetryCount(job.getRetryCount() + 1);
-                job.setStatus(JobStatus.PENDING);
-                jobRepository.save(job);
-                kafkaTemplate.send("job-requests", jobId.toString());
-            } else {
-                job.setStatus(JobStatus.FAILED);
-                job.setFailureReason(e.getMessage());
-                job.setFailedAt(LocalDateTime.now());
-                jobRepository.save(job);
-                metricsService.incrementJobsFailed();
-                kafkaTemplate.send("job-dlq",jobId.toString());
-                metricsService.incrementJobsDlq();
-
-                log.error("Job {} sent to DLQ after {} retries",jobId,MAX_RETRIES);
+            jobService.completeJob(jobId);
+            log.info("Completed job {}", jobId);
+        } catch (Exception exception) {
+            log.error("Job {} failed", jobId, exception);
+            ProcessingFailureResult result = jobService.recordProcessingFailure(jobId, exception.getMessage());
+            if (result == ProcessingFailureResult.SENT_TO_DLQ) {
+                jobPublisher.publishDlq(jobId);
+                log.error("Job {} moved to the DLQ", jobId);
             }
-
         }
     }
-
-    @KafkaListener(topics = "job-requests", groupId = "job-worker-group")
-    public void consume(String jobId) {
-        try {
-
-            log.info(
-                    "Thread {} received Job {}",
-                    Thread.currentThread().getName(),
-                    jobId);
-
-            Thread.sleep(30000); // simulate delay
-
-            processJob(Long.parseLong(jobId));
-
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.error("Kafka consumer interrupted", e);
-        }
-    }
-
 }

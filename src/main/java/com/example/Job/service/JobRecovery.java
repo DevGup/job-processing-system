@@ -1,44 +1,54 @@
 package com.example.Job.service;
 
-import java.util.List;
-
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
-import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import com.example.Job.entity.Job;
 import com.example.Job.entity.JobStatus;
 import com.example.Job.repo.JobRepository;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+
+import java.time.LocalDateTime;
 
 @Component
 @RequiredArgsConstructor
-
+@Slf4j
 public class JobRecovery {
 
     private final JobRepository jobRepository;
-    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final JobService jobService;
+    private final JobPublisher jobPublisher;
+
+    @Value("${app.jobs.recovery-batch-size:100}")
+    private int batchSize;
+
+    @Value("${app.jobs.processing-timeout-seconds:300}")
+    private long processingTimeoutSeconds;
 
     @EventListener(ApplicationReadyEvent.class)
+    @Scheduled(fixedDelayString = "${app.jobs.recovery-interval-ms:30000}")
     public void recoverPendingJobs() {
+        PageRequest page = PageRequest.of(0, batchSize);
+        int republished = 0;
+        for (var job : jobRepository.findByStatusOrderByCreatedAtAsc(JobStatus.PENDING, page)) {
+            jobPublisher.publishJob(job.getId());
+            republished++;
+        }
 
-        List<Job> jobs = jobRepository.findByStatusIn(
-                List.of(
-                        JobStatus.PENDING,
-                        JobStatus.PROCESSING));
-
-        System.out.println("Found " + jobs.size() + " recoverable jobs");
-
-        for (Job job : jobs) {
-
-            kafkaTemplate.send(
-                    "job-requests",
-                    job.getId().toString());
-
-            System.out.println(
-                    "Re-published Job " + job.getId());
+        LocalDateTime expiry = LocalDateTime.now().minusSeconds(processingTimeoutSeconds);
+        int recovered = 0;
+        for (var job : jobRepository.findByStatusAndProcessingStartedAtBeforeOrderByProcessingStartedAtAsc(
+                JobStatus.PROCESSING, expiry, page)) {
+            jobService.requeueStaleJob(job.getId());
+            recovered++;
+        }
+        if (republished > 0 || recovered > 0) {
+            log.info("Recovery dispatched {} pending jobs and requeued {} expired jobs", republished, recovered);
         }
     }
 }

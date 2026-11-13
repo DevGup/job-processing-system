@@ -10,7 +10,7 @@ public class DlqConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(DlqConsumer.class);
 
-    @KafkaListener(topics = "job-dlq", groupId = "job-dlq-group")
+    @KafkaListener(topics = "${app.kafka.topics.dlq}", groupId = "${app.kafka.dlq-consumer-group}")
     public void consumeDlq(String jobId) {
 
         log.error("DLQ RECEIVED FAILED JOB {}",jobId);
