@@ -1,0 +1,105 @@
+name: Scheduler CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Test and start the stack
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Run Maven tests
+        run: bash ./mvnw -B -ntp verify
+
+      - name: Build and start with Compose
+        run: docker compose up --build --wait --wait-timeout 300
+
+      - name: Submit a job and verify it completes
+        shell: bash
+        run: |
+          api="http://127.0.0.1:${JOB_API_PORT:-8080}"
+          curl --fail --silent --show-error --max-time 10 "$api/actuator/health" \
+            | jq -e '.status == "UP"'
+          job_id=$(curl --fail --silent --show-error --max-time 10 \
+            --header 'Content-Type: application/json' \
+            --data '{"type":"email","userId":1}' "$api/jobs" \
+            | jq -er '.id | numbers')
+
+          for attempt in {1..30}; do
+            status=$(curl --fail --silent --show-error --max-time 5 "$api/jobs/$job_id" \
+              | jq -er '.status')
+            echo "Job $job_id status: $status"
+            if [[ "$status" == DONE ]]; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Job $job_id did not complete in time" >&2
+          exit 1
+
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs --tail 100
+
+      - name: Remove the runner's test stack and volumes
+        if: always()
+        run: docker compose down --volumes
+
+  publish:
+    name: Publish to GitHub Container Registry
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set image tag from the Git commit
+        id: image
+        shell: bash
+        run: echo "tag=ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish the image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.image.outputs.tag }}
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
