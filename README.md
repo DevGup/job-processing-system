@@ -23,7 +23,30 @@ No host installation of Java, Maven, MySQL, Kafka, Prometheus, or Grafana is req
 
 ## Deploy on another computer
 
-Extract `job-scheduler-deploy.zip` and open a terminal in the extracted `job-scheduler` folder. Start Docker, then load the scheduler image and start the full stack.
+Use the scheduler image published by GitHub Actions. The image supports Linux containers on x86-64 and ARM64. Docker Compose starts the scheduler, MySQL, Kafka, ZooKeeper, Prometheus, and Grafana together.
+
+1. Start Docker with Linux containers on the target computer. See [Requirements](#requirements) and [Docker installation](https://docs.docker.com/get-started/get-docker/).
+2. [Download the project ZIP](https://github.com/DevGup/job-processing-system/archive/refs/heads/main.zip), extract it, and open a terminal in the folder containing `docker-compose.yml`.
+3. Create a file named `.env` next to `docker-compose.yml`. Add this line to deploy the published build verified in [this GitHub Actions run](https://github.com/DevGup/job-processing-system/actions/runs/43633327670).
+
+   ```dotenv
+   JOB_SCHEDULER_IMAGE=ghcr.io/devgup/job-processing-system:87693abe958850afa497d72b12d80b5b2ba3a4da
+   ```
+
+4. Pull the scheduler image and start the full stack.
+
+   ```sh
+   docker compose pull springboot
+   docker compose up --no-build --wait --wait-timeout 300
+   ```
+
+5. Open [the API health endpoint](http://localhost:8080/actuator/health) on the target computer. A healthy scheduler returns `{"status":"UP"}`. Use `docker compose ps` to check all six services.
+
+The first startup on a new computer creates an empty MySQL database. To bring over existing job records, restore a MySQL backup from the original machine.
+
+### Deploy from the image archive
+
+If you have `job-scheduler-deploy.zip`, extract it and open a terminal in the extracted `job-scheduler` folder. Start Docker, then load the scheduler image and start the full stack.
 
 ```sh
 docker image load --input job-scheduler-image.tar
@@ -40,7 +63,7 @@ Open a terminal in the project folder containing `Dockerfile` and `docker-compos
 docker compose up --build --wait --wait-timeout 300
 ```
 
-Before either startup command, you can copy `.env.example` to `.env` to set the database passwords and choose free host ports. If a port is already allocated, set `JOB_API_PORT`, `PROMETHEUS_PORT`, or `GRAFANA_PORT` in `.env` and run the startup command again.
+Before startup, you can add database passwords and host port settings to `.env`. See [`.env.example`](.env.example) for the available settings. If a port is already allocated, set `JOB_API_PORT`, `PROMETHEUS_PORT`, or `GRAFANA_PORT` in `.env` and run the startup command again.
 
 Check the stack and its API in a browser or terminal.
 
@@ -57,14 +80,7 @@ The [workflow](.github/workflows/ci-cd.yml) runs on pull requests targeting `mai
 
 On a successful push to `main`, the workflow publishes a Linux x86-64 and ARM64 image to GitHub Container Registry, tagged with the full Git commit SHA. New packages are private by default. For a private package, [sign in to `ghcr.io`](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-with-a-personal-access-token-classic) on the deployment machine with a token that has `read:packages` access.
 
-To deploy a published build, set `JOB_SCHEDULER_IMAGE=ghcr.io/devgup/job-processing-system:<commit-sha>` in the target machine's `.env`, replacing `<commit-sha>` with the SHA from the workflow run. From the project directory on that machine, run:
-
-```sh
-docker compose pull springboot
-docker compose up --no-build --wait --wait-timeout 300
-```
-
-Image publication is the delivery step. Updating a running stack is a separate deployment step. To roll back to an earlier published build, set `JOB_SCHEDULER_IMAGE` to its tag and run the same commands.
+Image publication is the delivery step. To deploy a later build or roll back to an earlier one, set `JOB_SCHEDULER_IMAGE` to that build's tag in the target machine's `.env` and follow the [deployment steps](#deploy-on-another-computer).
 
 ### Keep data from an earlier Compose setup
 
@@ -134,6 +150,7 @@ The defaults are suitable for the included Compose stack. Override values in `.e
 | `MYSQL_USER` | `jobapp` | Application database user |
 | `MYSQL_PASSWORD` | `jobapp-local-password` | Application database password |
 | `MYSQL_ROOT_PASSWORD` | `local-root-password` | Local MySQL root password |
+| `JOB_SCHEDULER_IMAGE` | `job-scheduler:local` | Scheduler image used by Compose |
 | `APP_KAFKA_CONCURRENCY` | `3` | Maximum parallel Kafka consumers |
 | `JOB_API_PORT` | `8080` | Host port for the job API |
 | `PROMETHEUS_PORT` | `9090` | Host port for Prometheus |
