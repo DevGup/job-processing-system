@@ -51,6 +51,21 @@ curl http://localhost:8080/actuator/health
 
 For startup errors, run `docker compose logs --tail 100`. Stop the stack with `docker compose down`. The named volumes retain MySQL, Kafka, ZooKeeper, Prometheus, and Grafana data. `docker compose down -v` permanently deletes the Compose-managed volumes.
 
+## CI/CD with GitHub Actions
+
+The [workflow](.github/workflows/ci-cd.yml) runs on pull requests targeting `main` and pushes to `main`. A GitHub-hosted runner uses Java 21 to run Maven tests, starts all six services with Compose, then submits an `email` job and checks that its status reaches `DONE`. Check the repository's **Actions** tab for each step's output. If a check fails, the workflow skips publishing and collects any available container logs.
+
+On a successful push to `main`, the workflow publishes a Linux x86-64 and ARM64 image to GitHub Container Registry, tagged with the full Git commit SHA. New packages are private by default. For a private package, [sign in to `ghcr.io`](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-with-a-personal-access-token-classic) on the deployment machine with a token that has `read:packages` access.
+
+To deploy a published build, set `JOB_SCHEDULER_IMAGE=ghcr.io/devgup/job-processing-system:<commit-sha>` in the target machine's `.env`, replacing `<commit-sha>` with the SHA from the workflow run. From the project directory on that machine, run:
+
+```sh
+docker compose pull springboot
+docker compose up --no-build --wait --wait-timeout 300
+```
+
+Image publication is the delivery step. Updating a running stack is a separate deployment step. To roll back to an earlier published build, set `JOB_SCHEDULER_IMAGE` to its tag and run the same commands.
+
 ### Keep data from an earlier Compose setup
 
 Run the updated Compose file with the same project name as your previous deployment. Before recreating the old ZooKeeper container, find the names of the volumes it already uses.
