@@ -54,7 +54,28 @@ jobs:
 
           echo "Job $job_id did not complete in time" >&2
           exit 1
+      
+      - name: Submit a test job that should fail
+        shell: bash
+        run: |
+          api="http://127.0.0.1:${JOB_API_PORT:-8080}"
+          job_id=$(curl -fsS --max-time 10 \
+            -H 'Content-Type: application/json' \
+            --data '{"type":"fail","userId":1}' "$api/jobs" \
+            | jq -er '.id')
+          echo "Created job $job_id"
+          for attempt in {1..30}; do
+            job=$(curl -fsS --max-time 5 "$api/jobs/$job_id")
+            if jq -e '.status == "FAILED"' <<< "$job" > /dev/null; then
+              echo "Job $job_id reached FAILED"
+              jq -e '.retryCount == 3' <<< "$job"
+              exit 0
+            fi
+            sleep 2
+          done
 
+          echo "Job $job_id did not reach FAILED in time"
+          exit 1
       - name: Show service logs on failure
         if: failure()
         run: docker compose logs --tail 100
