@@ -14,7 +14,16 @@ jobs:
     name: Test and start the stack
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      JOB_API_USERNAME: scheduler-ci
     steps:
+      - name: Create a password for this test run
+        shell: bash
+        run: |
+          password=$(openssl rand -hex 32)
+          echo "::add-mask::$password"
+          echo "JOB_API_PASSWORD=$password" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
@@ -31,19 +40,36 @@ jobs:
       - name: Build and start with Compose
         run: docker compose up --build --wait --wait-timeout 300
 
-      - name: Submit a job and verify it completes
+      - name: Check API login and get a CSRF token
         shell: bash
         run: |
           api="http://127.0.0.1:${JOB_API_PORT:-8080}"
           curl --fail --silent --show-error --max-time 10 "$api/actuator/health" \
             | jq -e '.status == "UP"'
-          job_id=$(curl --fail --silent --show-error --max-time 10 \
+          status=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$api/jobs")
+          [[ "$status" == 401 ]]
+          auth=(--user "$JOB_API_USERNAME:$JOB_API_PASSWORD")
+          status=$(curl -sS --max-time 10 "${auth[@]}" -o /dev/null -w '%{http_code}' \
+            -H 'Content-Type: application/json' --data '{}' "$api/jobs")
+          [[ "$status" == 403 ]]
+          token=$(curl -fsS --max-time 10 "${auth[@]}" --cookie-jar "$RUNNER_TEMP/jobs.cookies" \
+            "$api/csrf" | jq -er '.token | strings | select(length > 0)')
+          echo "::add-mask::$token"
+          echo "JOB_CSRF_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Submit a job and verify it completes
+        shell: bash
+        run: |
+          api="http://127.0.0.1:${JOB_API_PORT:-8080}"
+          auth=(--user "$JOB_API_USERNAME:$JOB_API_PASSWORD")
+          job_id=$(curl --fail --silent --show-error --max-time 10 "${auth[@]}" \
+            --cookie "$RUNNER_TEMP/jobs.cookies" -H "X-CSRF-TOKEN: $JOB_CSRF_TOKEN" \
             --header 'Content-Type: application/json' \
             --data '{"type":"email","userId":1}' "$api/jobs" \
             | jq -er '.id | numbers')
 
           for attempt in {1..30}; do
-            status=$(curl --fail --silent --show-error --max-time 5 "$api/jobs/$job_id" \
+            status=$(curl --fail --silent --show-error --max-time 5 "${auth[@]}" "$api/jobs/$job_id" \
               | jq -er '.status')
             echo "Job $job_id status: $status"
             if [[ "$status" == DONE ]]; then
@@ -59,13 +85,15 @@ jobs:
         shell: bash
         run: |
           api="http://127.0.0.1:${JOB_API_PORT:-8080}"
-          job_id=$(curl -fsS --max-time 10 \
+          auth=(--user "$JOB_API_USERNAME:$JOB_API_PASSWORD")
+          job_id=$(curl -fsS --max-time 10 "${auth[@]}" \
+            --cookie "$RUNNER_TEMP/jobs.cookies" -H "X-CSRF-TOKEN: $JOB_CSRF_TOKEN" \
             -H 'Content-Type: application/json' \
             --data '{"type":"fail","userId":1}' "$api/jobs" \
             | jq -er '.id')
           echo "Created job $job_id"
           for attempt in {1..30}; do
-            job=$(curl -fsS --max-time 5 "$api/jobs/$job_id")
+            job=$(curl -fsS --max-time 5 "${auth[@]}" "$api/jobs/$job_id")
             if jq -e '.status == "FAILED"' <<< "$job" > /dev/null; then
               echo "Job $job_id reached FAILED"
               jq -e '.retryCount == 3' <<< "$job"
@@ -81,13 +109,15 @@ jobs:
         shell: bash
         run: |
           api="http://127.0.0.1:${JOB_API_PORT:-8080}"
-          job_id=$(curl -fsS --max-time 10 \
+          auth=(--user "$JOB_API_USERNAME:$JOB_API_PASSWORD")
+          job_id=$(curl -fsS --max-time 10 "${auth[@]}" \
+            --cookie "$RUNNER_TEMP/jobs.cookies" -H "X-CSRF-TOKEN: $JOB_CSRF_TOKEN" \
             -H 'Content-Type: application/json' \
             --data '{"type":"report","userId":1}' "$api/jobs" \
             | jq -er '.id')
 
           for attempt in {1..30}; do
-            job=$(curl -fsS --max-time 5 "$api/jobs/$job_id")
+            job=$(curl -fsS --max-time 5 "${auth[@]}" "$api/jobs/$job_id")
             if jq -e '.status == "DONE"' <<< "$job" > /dev/null; then
               jq -e '.result == "Completed jobs: 1, Failed jobs: 1"' <<< "$job"
               exit 0
