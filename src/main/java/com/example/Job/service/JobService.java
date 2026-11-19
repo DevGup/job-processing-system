@@ -142,6 +142,11 @@ public class JobService {
         if (job.getStatus() != JobStatus.PROCESSING) {
             throw new JobStateException("Only processing jobs can be completed");
         }
+        if ("report".equalsIgnoreCase(job.getType())) {
+            long completedJobs = jobRepository.countByUserIdAndStatus(job.getUserId(), JobStatus.DONE);
+            long failedJobs = jobRepository.countByUserIdAndStatus(job.getUserId(), JobStatus.FAILED);
+            job.setResult("Completed jobs: " + completedJobs + ", Failed jobs: " + failedJobs);
+        }
         job.setStatus(JobStatus.DONE);
         job.setProcessingStartedAt(null);
         job.setFailureReason(null);

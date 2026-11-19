@@ -35,6 +35,8 @@ public class Job {
     @Column(length = 1000)
     private String failureReason;
 
+   private String result;
+
     private LocalDateTime failedAt;
 
     private LocalDateTime processingStartedAt;
