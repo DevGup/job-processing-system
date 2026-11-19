@@ -26,11 +26,11 @@ No host installation of Java, Maven, MySQL, Kafka, Prometheus, or Grafana is req
 Use the scheduler image published by GitHub Actions. The image supports Linux containers on x86-64 and ARM64. Docker Compose starts the scheduler, MySQL, Kafka, ZooKeeper, Prometheus, and Grafana together.
 
 1. Start Docker with Linux containers on the target computer. See [Requirements](#requirements) and [Docker installation](https://docs.docker.com/get-started/get-docker/).
-2. [Download the project ZIP](https://github.com/DevGup/job-processing-system/archive/refs/heads/main.zip), extract it, and open a terminal in the folder containing `docker-compose.yml`.
-3. Create a file named `.env` next to `docker-compose.yml`. Add this line to deploy the published build verified in [this GitHub Actions run](https://github.com/DevGup/job-processing-system/actions/runs/43633327670).
+2. Choose a push to `main` whose **Publish to GitHub Container Registry** job succeeded and whose commit includes the authentication changes. Open that commit, copy its full SHA, and download the source ZIP for that same commit. Extract it and open a terminal in the folder containing `docker-compose.yml`. [Scheduler CI/CD runs](https://github.com/DevGup/job-processing-system/actions/workflows/ci-cd.yml)
+3. Copy `.env.example` to `.env` in that folder. Set `JOB_API_USERNAME` and `JOB_API_PASSWORD` to your own login. Add the image setting below, replacing `FULL_COMMIT_SHA` with the SHA you copied.
 
    ```dotenv
-   JOB_SCHEDULER_IMAGE=ghcr.io/devgup/job-processing-system:87693abe958850afa497d72b12d80b5b2ba3a4da
+   JOB_SCHEDULER_IMAGE=ghcr.io/devgup/job-processing-system:FULL_COMMIT_SHA
    ```
 
 4. Pull the scheduler image and start the full stack.
@@ -46,7 +46,7 @@ The first startup on a new computer creates an empty MySQL database. To bring ov
 
 ### Deploy from the image archive
 
-If you have `job-scheduler-deploy.zip`, extract it and open a terminal in the extracted `job-scheduler` folder. Start Docker, then load the scheduler image and start the full stack.
+If you have `job-scheduler-deploy.zip`, extract it and open a terminal in the extracted `job-scheduler` folder. Use an archive built from a version that includes authentication to run the secured API. Set `JOB_API_USERNAME` and `JOB_API_PASSWORD` in a local `.env` next to its Compose file. Start Docker, then load the bundled image and start the stack.
 
 ```sh
 docker image load --input job-scheduler-image.tar
@@ -57,7 +57,7 @@ The archive contains the scheduler image for `linux/amd64` and `linux/arm64`. Co
 
 ## Build and run from source
 
-Open a terminal in the project folder containing `Dockerfile` and `docker-compose.yml`. Docker builds the scheduler for the host architecture and runs the Maven tests as part of the build.
+Open a terminal in the project folder containing `Dockerfile` and `docker-compose.yml`. On first setup, copy `.env.example` to `.env` and fill in `JOB_API_PASSWORD`. For an existing `.env`, add `JOB_API_USERNAME` and `JOB_API_PASSWORD` to that file. Docker builds the scheduler for the host architecture and runs the Maven tests as part of the build.
 
 ```sh
 docker compose up --build --wait --wait-timeout 300
@@ -76,7 +76,7 @@ For startup errors, run `docker compose logs --tail 100`. Stop the stack with `d
 
 ## CI/CD with GitHub Actions
 
-The [workflow](.github/workflows/ci-cd.yml) runs on pull requests targeting `main` and pushes to `main`. A GitHub-hosted runner uses Java 21 to run Maven tests, starts all six services with Compose, then submits an `email` job and checks that its status reaches `DONE`. Check the repository's **Actions** tab for each step's output. If a check fails, the workflow skips publishing and collects any available container logs.
+The [workflow](.github/workflows/ci-cd.yml) runs on pull requests targeting `main` and pushes to `main`. A GitHub-hosted runner runs Maven tests, starts all six services with Compose, and signs in with its own test credentials. It obtains a CSRF token, submits jobs, and checks that an email job completes, a failing job exhausts three retries, and a report returns the expected counts. Check the repository's **Actions** tab for each step's output. If a check fails, the workflow skips publishing and collects any available container logs.
 
 On a successful push to `main`, the workflow publishes a Linux x86-64 and ARM64 image to GitHub Container Registry, tagged with the full Git commit SHA. New packages are private by default. For a private package, [sign in to `ghcr.io`](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-with-a-personal-access-token-classic) on the deployment machine with a token that has `read:packages` access.
 
@@ -109,10 +109,26 @@ Kafka, ZooKeeper, and MySQL remain internal to Docker. This prevents host-port c
 
 ## API examples
 
-Create a job:
+Run these examples in one Bash session with `curl` and `jq` installed. Enter the API login you set in `.env`. For a remote deployment, use HTTPS before sending credentials.
+
+```bash
+api=http://localhost:8080
+read -rp "API username: " api_user
+read -rsp "API password: " api_password
+echo
+cookie_jar=$(mktemp)
+jobs_api() {
+  curl --silent --show-error --fail --user "$api_user:$api_password" \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" "$@"
+}
+csrf=$(jobs_api "$api/csrf")
+csrf_header=$(jq -er '.headerName + ": " + .token' <<< "$csrf")
+```
+
+`GET /csrf` provides a token for the current session. Send the session cookie and the token header together on requests that change jobs. Create a job with:
 
 ```sh
-curl -i -X POST http://localhost:8080/jobs \
+jobs_api -i "$api/jobs" -H "$csrf_header" \
   -H "Content-Type: application/json" \
   -d '{"type":"email","userId":1}'
 ```
@@ -120,13 +136,13 @@ curl -i -X POST http://localhost:8080/jobs \
 The response is `201 Created`; the `Location` header contains the job URL. Check a job:
 
 ```sh
-curl http://localhost:8080/jobs/1
+jobs_api "$api/jobs/1"
 ```
 
 Create a job that will reach the DLQ after retries:
 
 ```sh
-curl -X POST http://localhost:8080/jobs \
+jobs_api "$api/jobs" -H "$csrf_header" \
   -H "Content-Type: application/json" \
   -d '{"type":"fail","userId":1}'
 ```
@@ -134,18 +150,22 @@ curl -X POST http://localhost:8080/jobs \
 List failed jobs and resubmit one:
 
 ```sh
-curl http://localhost:8080/jobs/failed
-curl -X POST http://localhost:8080/jobs/retry-dlq/2
+jobs_api "$api/jobs/failed"
+jobs_api -X POST "$api/jobs/retry-dlq/2" -H "$csrf_header"
 ```
+
+After trying the examples, run `rm -f "$cookie_jar"` and `unset api_password csrf csrf_header` in that shell.
 
 The status endpoint is an administrative override. It accepts only valid state transitions and should not be used as the normal job-processing path.
 
 ## Configuration
 
-The defaults are suitable for the included Compose stack. Override values in `.env` for Compose or with environment variables when running the JAR elsewhere.
+Set the required API login in `.env` for Compose or in environment variables when running the JAR directly. Keep the password private.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `JOB_API_USERNAME` | Required | Username for the job API |
+| `JOB_API_PASSWORD` | Required | Password for the job API |
 | `MYSQL_DATABASE` | `jobdb` | MySQL database name |
 | `MYSQL_USER` | `jobapp` | Application database user |
 | `MYSQL_PASSWORD` | `jobapp-local-password` | Application database password |
