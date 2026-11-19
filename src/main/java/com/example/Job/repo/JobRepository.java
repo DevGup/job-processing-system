@@ -29,4 +29,5 @@ public interface JobRepository extends JpaRepository<Job, Long> {
     Optional<Job> findByIdForUpdate(@Param("id") Long id);
 
     long countByStatus(JobStatus status);
+    long countByUserIdAndStatus(Long userId, JobStatus status);
 }

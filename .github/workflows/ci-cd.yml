@@ -76,6 +76,28 @@ jobs:
 
           echo "Job $job_id did not reach FAILED in time"
           exit 1
+
+      - name: Verify the report job saves a result
+        shell: bash
+        run: |
+          api="http://127.0.0.1:${JOB_API_PORT:-8080}"
+          job_id=$(curl -fsS --max-time 10 \
+            -H 'Content-Type: application/json' \
+            --data '{"type":"report","userId":1}' "$api/jobs" \
+            | jq -er '.id')
+
+          for attempt in {1..30}; do
+            job=$(curl -fsS --max-time 5 "$api/jobs/$job_id")
+            if jq -e '.status == "DONE"' <<< "$job" > /dev/null; then
+              jq -e '.result == "Completed jobs: 1, Failed jobs: 1"' <<< "$job"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Report job $job_id did not reach DONE in time" >&2
+          exit 1
+
       - name: Show service logs on failure
         if: failure()
         run: docker compose logs --tail 100
