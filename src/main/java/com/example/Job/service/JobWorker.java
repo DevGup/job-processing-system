@@ -25,7 +25,7 @@ public class JobWorker {
 
         JobExecution job = jobService.claimJob(jobId);
         if (job == null) {
-            log.info("Skipping job {} because it is no longer pending", jobId);
+            log.debug("Skipping job {} because it is not eligible to run", jobId);
             return;
         }
 

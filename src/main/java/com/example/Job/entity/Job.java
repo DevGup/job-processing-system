@@ -2,9 +2,11 @@ package com.example.Job.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import java.time.Instant;
 import java.time.LocalDateTime;
 
 @Entity
+@Table(indexes = @Index(name = "idx_job_status_next_retry", columnList = "status, next_retry_at"))
 @Getter
 @Setter
 @NoArgsConstructor
@@ -31,6 +33,9 @@ public class Job {
     @Builder.Default
     @Column(nullable = false)
     private Integer retryCount = 0;
+
+    @Column(name = "next_retry_at")
+    private Instant nextRetryAt;
     
     @Column(length = 1000)
     private String failureReason;

@@ -1,6 +1,7 @@
 package com.example.Job.repo;
 
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -20,7 +21,9 @@ public interface JobRepository extends JpaRepository<Job, Long> {
 
     List<Job> findByStatusIn(List<JobStatus> statuses);
     List<Job> findByStatus(JobStatus status);
-    Page<Job> findByStatusOrderByCreatedAtAsc(JobStatus status, Pageable pageable);
+    List<Job> findByStatusAndNextRetryAtIsNullOrderByCreatedAtAsc(JobStatus status, Pageable pageable);
+    @Query("select j.id from Job j where j.status = :status and j.nextRetryAt <= :now order by j.nextRetryAt, j.id")
+    List<Long> findDueRetryIds(@Param("status") JobStatus status, @Param("now") Instant now, Pageable pageable);
     Page<Job> findByStatusAndProcessingStartedAtBeforeOrderByProcessingStartedAtAsc(
             JobStatus status, LocalDateTime startedBefore, Pageable pageable);
 

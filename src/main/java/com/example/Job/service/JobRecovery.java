@@ -13,6 +13,7 @@ import com.example.Job.repo.JobRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 
 @Component
@@ -30,12 +31,18 @@ public class JobRecovery {
     @Value("${app.jobs.processing-timeout-seconds:300}")
     private long processingTimeoutSeconds;
 
+    @Scheduled(fixedDelay = 1000)
+    public void dispatchDueRetries() {
+        var dueIds = jobRepository.findDueRetryIds(JobStatus.PENDING, Instant.now(), PageRequest.of(0, batchSize));
+        dueIds.forEach(jobService::dispatchRetryIfDue);
+    }
+
     @EventListener(ApplicationReadyEvent.class)
     @Scheduled(fixedDelayString = "${app.jobs.recovery-interval-ms:30000}")
     public void recoverPendingJobs() {
         PageRequest page = PageRequest.of(0, batchSize);
         int republished = 0;
-        for (var job : jobRepository.findByStatusOrderByCreatedAtAsc(JobStatus.PENDING, page)) {
+        for (var job : jobRepository.findByStatusAndNextRetryAtIsNullOrderByCreatedAtAsc(JobStatus.PENDING, page)) {
             jobPublisher.publishJob(job.getId());
             republished++;
         }
