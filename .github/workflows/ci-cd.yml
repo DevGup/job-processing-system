@@ -81,7 +81,7 @@ jobs:
           echo "Job $job_id did not complete in time" >&2
           exit 1
       
-      - name: Submit a test job that should fail
+      - name: Verify retry delays and dead-letter delivery
         shell: bash
         run: |
           api="http://127.0.0.1:${JOB_API_PORT:-8080}"
@@ -96,7 +96,15 @@ jobs:
             job=$(curl -fsS --max-time 5 "${auth[@]}" "$api/jobs/$job_id")
             if jq -e '.status == "FAILED"' <<< "$job" > /dev/null; then
               echo "Job $job_id reached FAILED"
-              jq -e '.retryCount == 3' <<< "$job"
+              jq -e '
+                def seconds: .[0:19] + "Z" | fromdateiso8601;
+                .retryCount == 3 and .nextRetryAt == null and
+                ((.failedAt | seconds) - (.createdAt | seconds) >= 7)
+              ' <<< "$job"
+              dlq_job_id=$(docker compose exec -T kafka kafka-console-consumer \
+                --bootstrap-server kafka:9092 --topic job-dlq --from-beginning \
+                --max-messages 1 --timeout-ms 20000)
+              [[ "$dlq_job_id" == "$job_id" ]]
               exit 0
             fi
             sleep 2

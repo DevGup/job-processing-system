@@ -11,12 +11,14 @@ import com.example.Job.repo.JobRepository;
 import com.example.Job.exception.JobNotFoundException;
 import com.example.Job.exception.JobStateException;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
 public class JobService {
 
+    private static final int MAX_RETRY_DELAY_DOUBLINGS = 6;
     private final JobRepository jobRepository;
     private final MetricsService metricsService;
     private final ApplicationEventPublisher eventPublisher;
@@ -77,7 +79,11 @@ public class JobService {
         if (!isAllowedTransition(job.getStatus(), status)) {
             throw new JobStateException("Cannot change a job from %s to %s".formatted(job.getStatus(), status));
         }
+        if (status == JobStatus.PROCESSING && isWaitingForRetry(job)) {
+            throw new JobStateException("Job is waiting for its next retry");
+        }
         job.setStatus(status);
+        job.setNextRetryAt(null);
         if (status == JobStatus.PROCESSING) {
             job.setProcessingStartedAt(LocalDateTime.now());
         } else {
@@ -108,6 +114,7 @@ public class JobService {
 
         job.setRetryCount(0);
         job.setStatus(JobStatus.PENDING);
+        job.setNextRetryAt(null);
         job.setFailureReason(null);
         job.setFailedAt(null);
         job.setProcessingStartedAt(null);
@@ -128,10 +135,11 @@ public class JobService {
     @Transactional
     public JobExecution claimJob(Long jobId) {
         Job job = jobRepository.findByIdForUpdate(jobId).orElse(null);
-        if (job == null || job.getStatus() != JobStatus.PENDING) {
+        if (job == null || job.getStatus() != JobStatus.PENDING || isWaitingForRetry(job)) {
             return null;
         }
         job.setStatus(JobStatus.PROCESSING);
+        job.setNextRetryAt(null);
         job.setProcessingStartedAt(LocalDateTime.now());
         return new JobExecution(job.getId(), job.getType());
     }
@@ -164,9 +172,10 @@ public class JobService {
         job.setFailureReason(failureReason);
         job.setProcessingStartedAt(null);
         if (job.getRetryCount() < maxRetries) {
+            long delaySeconds = 1L << Math.min(job.getRetryCount(), MAX_RETRY_DELAY_DOUBLINGS);
+            job.setNextRetryAt(Instant.now().plusSeconds(delaySeconds));
             job.setRetryCount(job.getRetryCount() + 1);
             job.setStatus(JobStatus.PENDING);
-            requestDispatch(jobId);
             return ProcessingFailureResult.RETRY_QUEUED;
         }
 
@@ -175,6 +184,21 @@ public class JobService {
         metricsService.incrementJobsFailed();
         metricsService.incrementJobsDlq();
         return ProcessingFailureResult.SENT_TO_DLQ;
+    }
+
+    @Transactional
+    public void dispatchRetryIfDue(Long jobId) {
+        Job job = jobRepository.findByIdForUpdate(jobId).orElse(null);
+        if (job == null || job.getStatus() != JobStatus.PENDING
+                || job.getNextRetryAt() == null || isWaitingForRetry(job)) {
+            return;
+        }
+        job.setNextRetryAt(null);
+        requestDispatch(jobId);
+    }
+
+    private boolean isWaitingForRetry(Job job) {
+        return job.getNextRetryAt() != null && job.getNextRetryAt().isAfter(Instant.now());
     }
 
     @Transactional

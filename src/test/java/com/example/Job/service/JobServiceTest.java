@@ -5,16 +5,21 @@ import com.example.Job.entity.JobStatus;
 import com.example.Job.exception.JobStateException;
 import com.example.Job.repo.JobRepository;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.context.ApplicationEventPublisher;
 
+import java.time.Instant;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class JobServiceTest {
@@ -66,6 +71,81 @@ class JobServiceTest {
         when(jobRepository.findByIdForUpdate(9L)).thenReturn(Optional.of(job));
 
         assertThrows(JobStateException.class, () -> jobService.retryDlq(9L));
+    }
+
+    @ParameterizedTest
+    @CsvSource({"0, 1", "1, 2", "2, 4", "6, 64", "70, 64"})
+    void failureSchedulesOneRetryWithCappedExponentialDelay(int previousRetries, long delaySeconds) {
+        JobService service = new JobService(jobRepository, metricsService, eventPublisher, 100);
+        Job job = storedJob(JobStatus.PROCESSING);
+        job.setRetryCount(previousRetries);
+
+        Instant beforeFailure = Instant.now();
+        service.recordProcessingFailure(job.getId(), "temporary failure");
+        Instant afterFailure = Instant.now();
+
+        Instant due = job.getNextRetryAt();
+        assertFalse(due.isBefore(beforeFailure.plusSeconds(delaySeconds)));
+        assertFalse(due.isAfter(afterFailure.plusSeconds(delaySeconds)));
+        assertEquals(JobStatus.PENDING, job.getStatus());
+        assertEquals(previousRetries + 1, job.getRetryCount());
+        assertEquals(ProcessingFailureResult.IGNORED, service.recordProcessingFailure(job.getId(), "duplicate"));
+        assertEquals(due, job.getNextRetryAt());
+        assertEquals(previousRetries + 1, job.getRetryCount());
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void schedulerAndKafkaRedeliveryBothRespectFutureDeadline() {
+        Job job = storedJob(JobStatus.PENDING);
+        Instant due = Instant.now().plusSeconds(3600);
+        job.setNextRetryAt(due);
+
+        jobService.dispatchRetryIfDue(job.getId());
+        assertNull(jobService.claimJob(job.getId()));
+
+        assertEquals(JobStatus.PENDING, job.getStatus());
+        assertEquals(due, job.getNextRetryAt());
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void repeatedSchedulerPollsDispatchAnEligibleRetryOnce() {
+        Job job = storedJob(JobStatus.PENDING);
+        job.setNextRetryAt(Instant.EPOCH);
+
+        jobService.dispatchRetryIfDue(job.getId());
+        jobService.dispatchRetryIfDue(job.getId());
+
+        verify(eventPublisher).publishEvent(new JobQueuedEvent(job.getId()));
+        assertEquals(new JobExecution(job.getId(), job.getType()), jobService.claimJob(job.getId()));
+        assertNull(jobService.claimJob(job.getId()));
+        assertNull(job.getNextRetryAt());
+    }
+
+    @Test
+    void legacyPendingJobWithNoDeadlineCanBeClaimedImmediately() {
+        Job job = storedJob(JobStatus.PENDING);
+        assertEquals(new JobExecution(job.getId(), job.getType()), jobService.claimJob(job.getId()));
+    }
+
+    @Test
+    void kafkaCanClaimADueRetryBeforeSchedulerPolls() {
+        Job job = storedJob(JobStatus.PENDING);
+        job.setNextRetryAt(Instant.EPOCH);
+
+        assertEquals(new JobExecution(job.getId(), job.getType()), jobService.claimJob(job.getId()));
+        jobService.dispatchRetryIfDue(job.getId());
+
+        assertEquals(JobStatus.PROCESSING, job.getStatus());
+        assertNull(job.getNextRetryAt());
+        verifyNoInteractions(eventPublisher);
+    }
+
+    private Job storedJob(JobStatus status) {
+        Job job = Job.builder().id(12L).type("report").status(status).build();
+        when(jobRepository.findByIdForUpdate(job.getId())).thenReturn(Optional.of(job));
+        return job;
     }
 
     @Test

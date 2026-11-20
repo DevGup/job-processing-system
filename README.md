@@ -7,11 +7,13 @@ An asynchronous job API built with Spring Boot, MySQL, Kafka, Prometheus, and Gr
 - Creates and persists jobs through a REST API.
 - Dispatches pending jobs through Kafka after the database transaction commits.
 - Claims jobs under a database lock, so duplicate Kafka messages do not execute a job twice.
-- Retries failed jobs up to a configurable limit, then records the job as failed and sends its ID to a dead-letter topic.
+- Retries failed jobs with exponential backoff. By default the worker waits at least 1 second before the first retry, 2 before the second, and 4 before the third. If the last retry fails, it marks the job as failed and sends its ID to the dead-letter topic.
 - Recovers pending jobs and expired processing leases after a restart.
 - Exposes health and Prometheus metrics.
 
 `type: "fail"` is a deliberate test mode: it exercises retry and DLQ behavior. Any other non-blank type completes successfully.
+
+While a retry is waiting, `GET /jobs/{id}` shows `PENDING` and a `nextRetryAt` timestamp in UTC. MySQL stores that time so the wait survives an application restart. The scheduler checks for eligible retries once per second. If the retry limit is raised, delays continue doubling up to 64 seconds per retry.
 
 ## Requirements
 
