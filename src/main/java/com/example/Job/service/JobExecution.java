@@ -1,4 +1,6 @@
 package com.example.Job.service;
 
-public record JobExecution(Long jobId, String type) {
+import java.util.UUID;
+
+public record JobExecution(Long jobId, String type, UUID attemptId) {
 }

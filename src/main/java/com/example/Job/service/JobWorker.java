@@ -33,11 +33,15 @@ public class JobWorker {
             if ("fail".equalsIgnoreCase(job.type())) {
                 throw new IllegalStateException("Simulated job failure");
             }
-            jobService.completeJob(jobId);
-            log.info("Completed job {}", jobId);
+            if (jobService.completeJob(job)) {
+                log.info("Completed job {}", jobId);
+            }
         } catch (Exception exception) {
+            ProcessingFailureResult result = jobService.recordProcessingFailure(job, exception.getMessage());
+            if (result == ProcessingFailureResult.IGNORED) {
+                return;
+            }
             log.error("Job {} failed", jobId, exception);
-            ProcessingFailureResult result = jobService.recordProcessingFailure(jobId, exception.getMessage());
             if (result == ProcessingFailureResult.SENT_TO_DLQ) {
                 jobPublisher.publishDlq(jobId);
                 log.error("Job {} moved to the DLQ", jobId);

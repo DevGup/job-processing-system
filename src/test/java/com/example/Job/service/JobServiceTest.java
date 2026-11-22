@@ -10,12 +10,16 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -77,11 +81,12 @@ class JobServiceTest {
     @CsvSource({"0, 1", "1, 2", "2, 4", "6, 64", "70, 64"})
     void failureSchedulesOneRetryWithCappedExponentialDelay(int previousRetries, long delaySeconds) {
         JobService service = new JobService(jobRepository, metricsService, eventPublisher, 100);
-        Job job = storedJob(JobStatus.PROCESSING);
+        Job job = storedJob(JobStatus.PENDING);
         job.setRetryCount(previousRetries);
+        JobExecution execution = service.claimJob(job.getId());
 
         Instant beforeFailure = Instant.now();
-        service.recordProcessingFailure(job.getId(), "temporary failure");
+        service.recordProcessingFailure(execution, "temporary failure");
         Instant afterFailure = Instant.now();
 
         Instant due = job.getNextRetryAt();
@@ -89,7 +94,7 @@ class JobServiceTest {
         assertFalse(due.isAfter(afterFailure.plusSeconds(delaySeconds)));
         assertEquals(JobStatus.PENDING, job.getStatus());
         assertEquals(previousRetries + 1, job.getRetryCount());
-        assertEquals(ProcessingFailureResult.IGNORED, service.recordProcessingFailure(job.getId(), "duplicate"));
+        assertEquals(ProcessingFailureResult.IGNORED, service.recordProcessingFailure(execution, "duplicate"));
         assertEquals(due, job.getNextRetryAt());
         assertEquals(previousRetries + 1, job.getRetryCount());
         verifyNoInteractions(eventPublisher);
@@ -118,7 +123,7 @@ class JobServiceTest {
         jobService.dispatchRetryIfDue(job.getId());
 
         verify(eventPublisher).publishEvent(new JobQueuedEvent(job.getId()));
-        assertEquals(new JobExecution(job.getId(), job.getType()), jobService.claimJob(job.getId()));
+        assertNotNull(jobService.claimJob(job.getId()));
         assertNull(jobService.claimJob(job.getId()));
         assertNull(job.getNextRetryAt());
     }
@@ -126,7 +131,11 @@ class JobServiceTest {
     @Test
     void legacyPendingJobWithNoDeadlineCanBeClaimedImmediately() {
         Job job = storedJob(JobStatus.PENDING);
-        assertEquals(new JobExecution(job.getId(), job.getType()), jobService.claimJob(job.getId()));
+        JobExecution execution = jobService.claimJob(job.getId());
+        assertNotNull(execution.attemptId());
+        assertEquals(job.getAttemptId(), execution.attemptId());
+        assertEquals(job.getId(), execution.jobId());
+        assertEquals(job.getType(), execution.type());
     }
 
     @Test
@@ -134,7 +143,7 @@ class JobServiceTest {
         Job job = storedJob(JobStatus.PENDING);
         job.setNextRetryAt(Instant.EPOCH);
 
-        assertEquals(new JobExecution(job.getId(), job.getType()), jobService.claimJob(job.getId()));
+        assertNotNull(jobService.claimJob(job.getId()));
         jobService.dispatchRetryIfDue(job.getId());
 
         assertEquals(JobStatus.PROCESSING, job.getStatus());
@@ -150,17 +159,97 @@ class JobServiceTest {
 
     @Test
     void sendsAJobToTheDlqAfterItsRetryBudgetIsExhausted() {
-        Job job = new Job();
-        job.setId(10L);
-        job.setStatus(JobStatus.PROCESSING);
+        Job job = storedJob(JobStatus.PENDING);
         job.setRetryCount(3);
-        when(jobRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(job));
+        JobExecution execution = jobService.claimJob(job.getId());
 
-        ProcessingFailureResult result = jobService.recordProcessingFailure(10L, "failed");
+        ProcessingFailureResult result = jobService.recordProcessingFailure(execution, "failed");
 
         assertEquals(ProcessingFailureResult.SENT_TO_DLQ, result);
         assertEquals(JobStatus.FAILED, job.getStatus());
         verify(metricsService).incrementJobsFailed();
         verify(metricsService).incrementJobsDlq();
+    }
+
+    @Test
+    void staleWorkerCannotCompleteOrFailANewerAttempt() {
+        Job job = storedJob(JobStatus.PENDING);
+        JobExecution expired = jobService.claimJob(job.getId());
+        LocalDateTime cutoff = LocalDateTime.now().minusHours(1);
+        job.setProcessingStartedAt(cutoff.minusMinutes(1));
+        assertTrue(jobService.requeueStaleJob(job.getId(), cutoff));
+        JobExecution current = jobService.claimJob(job.getId());
+        assertNotEquals(expired.attemptId(), current.attemptId());
+
+        assertFalse(jobService.completeJob(expired));
+        assertEquals(ProcessingFailureResult.IGNORED, jobService.recordProcessingFailure(expired, "late failure"));
+        assertEquals(JobStatus.PROCESSING, job.getStatus());
+        assertEquals(current.attemptId(), job.getAttemptId());
+        assertEquals(0, job.getRetryCount());
+        assertNull(job.getNextRetryAt());
+        assertNull(job.getResult());
+        verifyNoInteractions(metricsService);
+
+        assertTrue(jobService.completeJob(current));
+        assertEquals(JobStatus.DONE, job.getStatus());
+    }
+
+    @Test
+    void redeliveryAndRepeatedCallbacksLeaveACompletedJobAlone() {
+        Job job = storedJob(JobStatus.PENDING);
+        JobExecution execution = jobService.claimJob(job.getId());
+        assertTrue(jobService.completeJob(execution));
+        String result = job.getResult();
+
+        assertNull(jobService.claimJob(job.getId()));
+        assertFalse(jobService.completeJob(execution));
+        assertEquals(ProcessingFailureResult.IGNORED, jobService.recordProcessingFailure(execution, "late failure"));
+        assertEquals(JobStatus.DONE, job.getStatus());
+        assertEquals(result, job.getResult());
+        assertEquals(0, job.getRetryCount());
+        verify(metricsService).incrementJobsProcessed();
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void lateWorkerCallbacksForADeletedJobAreIgnored() {
+        Job job = storedJob(JobStatus.PENDING);
+        JobExecution execution = jobService.claimJob(job.getId());
+        when(jobRepository.findByIdForUpdate(job.getId())).thenReturn(Optional.empty());
+
+        assertFalse(jobService.completeJob(execution));
+        assertEquals(ProcessingFailureResult.IGNORED, jobService.recordProcessingFailure(execution, "late failure"));
+        assertNull(jobService.claimJob(job.getId()));
+        verifyNoInteractions(metricsService, eventPublisher);
+    }
+
+    @Test
+    void administrativeResetInvalidatesTheOriginalClaim() {
+        Job job = storedJob(JobStatus.PENDING);
+        JobExecution execution = jobService.claimJob(job.getId());
+        jobService.updateJobStatus(job.getId(), JobStatus.PENDING);
+        jobService.updateJobStatus(job.getId(), JobStatus.PROCESSING);
+
+        assertFalse(jobService.completeJob(execution));
+        assertEquals(ProcessingFailureResult.IGNORED, jobService.recordProcessingFailure(execution, "late failure"));
+        assertEquals(JobStatus.PROCESSING, job.getStatus());
+        assertEquals(0, job.getRetryCount());
+        verifyNoInteractions(metricsService);
+    }
+
+    @Test
+    void recoveryRechecksItsCutoffBeforeRequeuingAFreshClaim() {
+        Job job = storedJob(JobStatus.PROCESSING);
+        LocalDateTime cutoff = LocalDateTime.now().minusHours(1);
+        job.setProcessingStartedAt(cutoff.minusMinutes(1));
+        assertNull(job.getAttemptId());
+        assertTrue(jobService.requeueStaleJob(job.getId(), cutoff));
+        JobExecution current = jobService.claimJob(job.getId());
+
+        assertFalse(jobService.requeueStaleJob(job.getId(), cutoff));
+
+        assertEquals(JobStatus.PROCESSING, job.getStatus());
+        assertEquals(current.attemptId(), job.getAttemptId());
+        verify(eventPublisher).publishEvent(new JobQueuedEvent(job.getId()));
     }
 }
