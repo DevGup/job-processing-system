@@ -14,6 +14,7 @@ import com.example.Job.exception.JobStateException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 @Service
 public class JobService {
@@ -83,6 +84,7 @@ public class JobService {
             throw new JobStateException("Job is waiting for its next retry");
         }
         job.setStatus(status);
+        job.setAttemptId(null);
         job.setNextRetryAt(null);
         if (status == JobStatus.PROCESSING) {
             job.setProcessingStartedAt(LocalDateTime.now());
@@ -139,16 +141,17 @@ public class JobService {
             return null;
         }
         job.setStatus(JobStatus.PROCESSING);
+        job.setAttemptId(UUID.randomUUID());
         job.setNextRetryAt(null);
         job.setProcessingStartedAt(LocalDateTime.now());
-        return new JobExecution(job.getId(), job.getType());
+        return new JobExecution(job.getId(), job.getType(), job.getAttemptId());
     }
 
     @Transactional
-    public void completeJob(Long jobId) {
-        Job job = findJobForUpdate(jobId);
-        if (job.getStatus() != JobStatus.PROCESSING) {
-            throw new JobStateException("Only processing jobs can be completed");
+    public boolean completeJob(JobExecution execution) {
+        Job job = findCurrentAttemptForUpdate(execution);
+        if (job == null) {
+            return false;
         }
         if ("report".equalsIgnoreCase(job.getType())) {
             long completedJobs = jobRepository.countByUserIdAndStatus(job.getUserId(), JobStatus.DONE);
@@ -156,20 +159,23 @@ public class JobService {
             job.setResult("Completed jobs: " + completedJobs + ", Failed jobs: " + failedJobs);
         }
         job.setStatus(JobStatus.DONE);
+        job.setAttemptId(null);
         job.setProcessingStartedAt(null);
         job.setFailureReason(null);
         job.setFailedAt(null);
         metricsService.incrementJobsProcessed();
+        return true;
     }
 
     @Transactional
-    public ProcessingFailureResult recordProcessingFailure(Long jobId, String failureReason) {
-        Job job = findJobForUpdate(jobId);
-        if (job.getStatus() != JobStatus.PROCESSING) {
+    public ProcessingFailureResult recordProcessingFailure(JobExecution execution, String failureReason) {
+        Job job = findCurrentAttemptForUpdate(execution);
+        if (job == null) {
             return ProcessingFailureResult.IGNORED;
         }
 
         job.setFailureReason(failureReason);
+        job.setAttemptId(null);
         job.setProcessingStartedAt(null);
         if (job.getRetryCount() < maxRetries) {
             long delaySeconds = 1L << Math.min(job.getRetryCount(), MAX_RETRY_DELAY_DOUBLINGS);
@@ -202,15 +208,25 @@ public class JobService {
     }
 
     @Transactional
-    public void requeueStaleJob(Long jobId) {
-        Job job = findJobForUpdate(jobId);
-        if (job.getStatus() != JobStatus.PROCESSING) {
-            return;
+    public boolean requeueStaleJob(Long jobId, LocalDateTime expiry) {
+        Job job = jobRepository.findByIdForUpdate(jobId).orElse(null);
+        if (job == null || job.getStatus() != JobStatus.PROCESSING || job.getProcessingStartedAt() == null
+                || !job.getProcessingStartedAt().isBefore(expiry)) {
+            return false;
         }
         job.setStatus(JobStatus.PENDING);
+        job.setAttemptId(null);
         job.setProcessingStartedAt(null);
         job.setFailureReason("Recovered after the worker lease expired");
         requestDispatch(jobId);
+        return true;
+    }
+
+    private Job findCurrentAttemptForUpdate(JobExecution execution) {
+        return jobRepository.findByIdForUpdate(execution.jobId())
+                .filter(job -> job.getStatus() == JobStatus.PROCESSING && job.getAttemptId() != null
+                        && job.getAttemptId().equals(execution.attemptId()))
+                .orElse(null);
     }
 
     private Job findJobForUpdate(Long id) {

@@ -2,6 +2,10 @@ package com.example.Job.service;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.UUID;
+
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -15,19 +19,22 @@ class JobWorkerTest {
 
     @Test
     void completesClaimedJobs() {
-        when(jobService.claimJob(1L)).thenReturn(new JobExecution(1L, "email"));
+        JobExecution execution = new JobExecution(1L, "email", UUID.randomUUID());
+        when(jobService.claimJob(1L)).thenReturn(execution);
+        when(jobService.completeJob(execution)).thenReturn(true);
 
         worker.consume("1");
 
-        verify(jobService).completeJob(1L);
+        verify(jobService).completeJob(execution);
         verify(jobPublisher, never()).publishDlq(1L);
     }
 
     @Test
     void routesExhaustedFailuresToTheDlq() {
-        when(jobService.claimJob(2L)).thenReturn(new JobExecution(2L, "fail"));
-        when(jobService.recordProcessingFailure(org.mockito.ArgumentMatchers.eq(2L),
-                org.mockito.ArgumentMatchers.anyString())).thenReturn(ProcessingFailureResult.SENT_TO_DLQ);
+        JobExecution execution = new JobExecution(2L, "fail", UUID.randomUUID());
+        when(jobService.claimJob(2L)).thenReturn(execution);
+        when(jobService.recordProcessingFailure(eq(execution), anyString()))
+                .thenReturn(ProcessingFailureResult.SENT_TO_DLQ);
 
         worker.consume("2");
 

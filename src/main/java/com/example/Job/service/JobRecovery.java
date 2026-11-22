@@ -51,8 +51,9 @@ public class JobRecovery {
         int recovered = 0;
         for (var job : jobRepository.findByStatusAndProcessingStartedAtBeforeOrderByProcessingStartedAtAsc(
                 JobStatus.PROCESSING, expiry, page)) {
-            jobService.requeueStaleJob(job.getId());
-            recovered++;
+            if (jobService.requeueStaleJob(job.getId(), expiry)) {
+                recovered++;
+            }
         }
         if (republished > 0 || recovered > 0) {
             log.info("Recovery dispatched {} pending jobs and requeued {} expired jobs", republished, recovered);

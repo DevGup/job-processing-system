@@ -1,9 +1,11 @@
 package com.example.Job.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Entity
 @Table(indexes = @Index(name = "idx_job_status_next_retry", columnList = "status, next_retry_at"))
@@ -45,6 +47,9 @@ public class Job {
     private LocalDateTime failedAt;
 
     private LocalDateTime processingStartedAt;
+
+    @JsonIgnore
+    private UUID attemptId;
 
     @Version
     private Long version;
