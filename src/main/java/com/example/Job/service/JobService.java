@@ -35,10 +35,11 @@ public class JobService {
     }
 
     @Transactional
-    public Job createJob(String type, Long userId) {
+    public Job createJob(String type, long accountId) {
 
         Job job = new Job();
-        job.setUserId(userId);
+        job.setUserId(accountId);
+        job.setOwnerId(accountId);
         job.setType(type);
         job.setStatus(JobStatus.PENDING);
         job.setCreatedAt(LocalDateTime.now());
@@ -55,13 +56,17 @@ public class JobService {
     }
 
     @Transactional(readOnly = true)
-    public Job getJob(Long id) {
-        return jobRepository.findById(id).orElseThrow(() -> new JobNotFoundException(id));
+    public Job getJob(Long id, JobCaller caller) {
+        return jobRepository.findById(id)
+                .filter(job -> caller.canAccess(job.getOwnerId()))
+                .orElseThrow(() -> new JobNotFoundException(id));
     }
 
     @Transactional
-    public void deleteJob(Long id) {
-        Job job = jobRepository.findById(id).orElseThrow(() -> new JobNotFoundException(id));
+    public void deleteJob(Long id, JobCaller caller) {
+        Job job = jobRepository.findByIdForUpdate(id)
+                .filter(stored -> caller.canAccess(stored.getOwnerId()))
+                .orElseThrow(() -> new JobNotFoundException(id));
         if (job.getStatus() == JobStatus.PROCESSING) {
             throw new JobStateException("A processing job cannot be deleted");
         }
@@ -125,13 +130,14 @@ public class JobService {
     }
 
     @Transactional(readOnly = true)
-    public List<Job> getFailedJobs() {
-        return jobRepository.findByStatus(JobStatus.FAILED);
+    public List<Job> getFailedJobs(JobCaller caller) {
+        return caller.admin() ? jobRepository.findByStatus(JobStatus.FAILED)
+                : jobRepository.findByOwnerIdAndStatus(caller.accountId(), JobStatus.FAILED);
     }
 
     @Transactional(readOnly = true)
-    public List<Job> getAllJobs() {
-        return jobRepository.findAll();
+    public List<Job> getAllJobs(JobCaller caller) {
+        return caller.admin() ? jobRepository.findAll() : jobRepository.findByOwnerId(caller.accountId());
     }
 
     @Transactional
@@ -154,8 +160,10 @@ public class JobService {
             return false;
         }
         if ("report".equalsIgnoreCase(job.getType())) {
-            long completedJobs = jobRepository.countByUserIdAndStatus(job.getUserId(), JobStatus.DONE);
-            long failedJobs = jobRepository.countByUserIdAndStatus(job.getUserId(), JobStatus.FAILED);
+            long completedJobs = jobRepository.countByOwnerIdAndUserIdAndStatus(
+                    job.getOwnerId(), job.getUserId(), JobStatus.DONE);
+            long failedJobs = jobRepository.countByOwnerIdAndUserIdAndStatus(
+                    job.getOwnerId(), job.getUserId(), JobStatus.FAILED);
             job.setResult("Completed jobs: " + completedJobs + ", Failed jobs: " + failedJobs);
         }
         job.setStatus(JobStatus.DONE);

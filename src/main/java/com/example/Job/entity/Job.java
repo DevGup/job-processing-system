@@ -8,7 +8,10 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Entity
-@Table(indexes = @Index(name = "idx_job_status_next_retry", columnList = "status, next_retry_at"))
+@Table(indexes = {
+        @Index(name = "idx_job_status_next_retry", columnList = "status, next_retry_at"),
+        @Index(name = "idx_job_owner_status", columnList = "owner_id, status")
+})
 @Getter
 @Setter
 @NoArgsConstructor
@@ -21,6 +24,10 @@ public class Job {
 
     @Column(nullable = false)
     private Long userId;
+
+    @JsonIgnore
+    @Column(name = "owner_id", updatable = false)
+    private Long ownerId;
 
     @Column(nullable = false, length = 100)
     private String type;

@@ -21,6 +21,8 @@ public interface JobRepository extends JpaRepository<Job, Long> {
 
     List<Job> findByStatusIn(List<JobStatus> statuses);
     List<Job> findByStatus(JobStatus status);
+    List<Job> findByOwnerId(Long ownerId);
+    List<Job> findByOwnerIdAndStatus(Long ownerId, JobStatus status);
     List<Job> findByStatusAndNextRetryAtIsNullOrderByCreatedAtAsc(JobStatus status, Pageable pageable);
     @Query("select j.id from Job j where j.status = :status and j.nextRetryAt <= :now order by j.nextRetryAt, j.id")
     List<Long> findDueRetryIds(@Param("status") JobStatus status, @Param("now") Instant now, Pageable pageable);
@@ -32,5 +34,5 @@ public interface JobRepository extends JpaRepository<Job, Long> {
     Optional<Job> findByIdForUpdate(@Param("id") Long id);
 
     long countByStatus(JobStatus status);
-    long countByUserIdAndStatus(Long userId, JobStatus status);
+    long countByOwnerIdAndUserIdAndStatus(Long ownerId, Long userId, JobStatus status);
 }

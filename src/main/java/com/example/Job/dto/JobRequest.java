@@ -1,8 +1,7 @@
 package com.example.Job.dto;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Null;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -13,8 +12,7 @@ public class JobRequest {
     @Size(max = 100, message = "type must be at most 100 characters")
     private String type;
 
-    @NotNull(message = "userId is required")
-    @Positive(message = "userId must be positive")
+    @Null(message = "omit userId; the signed-in account owns the job")
     private Long userId;
 
 }
