@@ -4,7 +4,7 @@ An asynchronous job API built with Spring Boot, MySQL, Kafka, Prometheus, and Gr
 
 ## What it does
 
-- Creates and persists jobs through a REST API.
+- Authenticates job API requests with signed JWTs and stores jobs in MySQL. Users can access their own jobs. Administrators can access all jobs, override status and retry dead-lettered jobs.
 - Dispatches pending jobs through Kafka after the database transaction commits.
 - Claims eligible jobs under a database lock. Duplicate or delayed Kafka messages can only start work while the job is pending and its retry is due.
 - Retries failed jobs with exponential backoff. By default the worker waits at least 1 second before the first retry, 2 before the second, and 4 before the third. If the last retry fails, it marks the job as failed and sends its ID to the dead-letter topic.
@@ -30,8 +30,8 @@ No host installation of Java, Maven, MySQL, Kafka, Prometheus, or Grafana is req
 Use the scheduler image published by GitHub Actions. The image supports Linux containers on x86-64 and ARM64. Docker Compose starts the scheduler, MySQL, Kafka, ZooKeeper, Prometheus, and Grafana together.
 
 1. Start Docker with Linux containers on the target computer. See [Requirements](#requirements) and [Docker installation](https://docs.docker.com/get-started/get-docker/).
-2. Choose a push to `main` whose **Publish to GitHub Container Registry** job succeeded and whose commit includes the authentication changes. Open that commit, copy its full SHA, and download the source ZIP for that same commit. Extract it and open a terminal in the folder containing `docker-compose.yml`. [Scheduler CI/CD runs](https://github.com/DevGup/job-processing-system/actions/workflows/ci-cd.yml)
-3. Copy `.env.example` to `.env` in that folder. Set `JOB_API_USERNAME` and `JOB_API_PASSWORD` to your own login. Add the image setting below, replacing `FULL_COMMIT_SHA` with the SHA you copied.
+2. Choose a push to `main` whose **Publish to GitHub Container Registry** job succeeded and whose commit includes JWT authentication. Open that commit, copy its full SHA, and download the source ZIP for that same commit. Extract it and open a terminal in the folder containing `docker-compose.yml`. [Scheduler CI/CD runs](https://github.com/DevGup/job-processing-system/actions/workflows/ci-cd.yml)
+3. Copy `.env.example` to `.env` in that folder and [configure the administrator and JWT signing key](#configuration). Add the image setting below, replacing `FULL_COMMIT_SHA` with the SHA you copied.
 
    ```dotenv
    JOB_SCHEDULER_IMAGE=ghcr.io/devgup/job-processing-system:FULL_COMMIT_SHA
@@ -50,7 +50,7 @@ The first startup on a new computer creates an empty MySQL database. To bring ov
 
 ### Deploy from the image archive
 
-If you have `job-scheduler-deploy.zip`, extract it and open a terminal in the extracted `job-scheduler` folder. Use an archive built from a version that includes authentication to run the secured API. Set `JOB_API_USERNAME` and `JOB_API_PASSWORD` in a local `.env` next to its Compose file. Start Docker, then load the bundled image and start the stack.
+If you have `job-scheduler-deploy.zip`, extract it and open a terminal in the extracted `job-scheduler` folder. Use an archive built from a version that includes JWT authentication. [Configure the administrator and JWT signing key](#configuration) in a local `.env` next to its Compose file. Start Docker, then load the bundled image and start the stack.
 
 ```sh
 docker image load --input job-scheduler-image.tar
@@ -61,7 +61,7 @@ The archive contains the scheduler image for `linux/amd64` and `linux/arm64`. Co
 
 ## Build and run from source
 
-Open a terminal in the project folder containing `Dockerfile` and `docker-compose.yml`. On first setup, copy `.env.example` to `.env` and fill in `JOB_API_PASSWORD`. For an existing `.env`, add `JOB_API_USERNAME` and `JOB_API_PASSWORD` to that file. Docker builds the scheduler for the host architecture and runs the Maven tests as part of the build.
+Open a terminal in the project folder containing `Dockerfile` and `docker-compose.yml`. On first setup, copy `.env.example` to `.env`. [Configure the administrator and JWT signing key](#configuration) in your new or existing `.env`. Docker builds the scheduler for the host architecture and runs the Maven tests as part of the build.
 
 ```sh
 docker compose up --build --wait --wait-timeout 300
@@ -80,7 +80,7 @@ For startup errors, run `docker compose logs --tail 100`. Stop the stack with `d
 
 ## CI/CD with GitHub Actions
 
-The [workflow](.github/workflows/ci-cd.yml) runs on pull requests targeting `main` and pushes to `main`. A GitHub-hosted runner runs Maven tests, starts all six services with Compose, and signs in with its own test credentials. It obtains a CSRF token, submits jobs, and checks that an email job completes, a failing job exhausts three retries, and a report returns the expected counts. Check the repository's **Actions** tab for each step's output. If a check fails, the workflow skips publishing and collects any available container logs.
+The [workflow](.github/workflows/ci-cd.yml) runs on pull requests targeting `main` and pushes to `main`. A GitHub-hosted runner runs Maven tests, starts all six services with Compose, and registers two users. It checks that Bob cannot list, read or delete Alice's job, exercises administrator permissions, and verifies job completion, retries, dead-letter delivery and report counts. Check the repository's **Actions** tab for each step's output. If a check fails, the workflow skips publishing and collects any available container logs.
 
 On a successful push to `main`, the workflow publishes a Linux x86-64 and ARM64 image to GitHub Container Registry, tagged with the full Git commit SHA. New packages are private by default. For a private package, [sign in to `ghcr.io`](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-with-a-personal-access-token-classic) on the deployment machine with a token that has `read:packages` access.
 
@@ -99,6 +99,8 @@ Use the volume `Name` for `/var/lib/zookeeper/data` as `ZOOKEEPER_DATA_VOLUME` a
 
 MySQL only applies its user and password settings when it initializes an empty volume. For an existing volume, use the database and application credentials already provisioned in MySQL. If the older setup only created a root account, create a dedicated MySQL user with access to the existing database before starting the updated stack.
 
+Jobs created before account-based ownership have no verified owner. Only administrators can access those jobs, even if a newly registered account has the same numeric ID as an old job's `userId`.
+
 ## Services
 
 | Service | Address |
@@ -113,63 +115,95 @@ Kafka, ZooKeeper, and MySQL remain internal to Docker. This prevents host-port c
 
 ## API examples
 
-Run these examples in one Bash session with `curl` and `jq` installed. Enter the API login you set in `.env`. For a remote deployment, use HTTPS before sending credentials.
+Run these examples in one Bash session with `curl` and `jq` installed. For a remote deployment, use HTTPS for both passwords and tokens. To register a new user, choose a username of 1–64 letters (A–Z or a–z), digits, dots, underscores or hyphens, and a password of at least 12 characters and at most 72 UTF-8 bytes.
 
 ```bash
 api=http://localhost:8080
 read -rp "API username: " api_user
 read -rsp "API password: " api_password
 echo
-cookie_jar=$(mktemp)
+credentials=$(jq -nc --arg username "$api_user" --arg password "$api_password" '{username: $username, password: $password}')
+unset api_password
+```
+
+Register once to create a regular user. If you already have an account or you are using the configured administrator, skip registration.
+
+```bash
+curl -fsS -H 'Content-Type: application/json' --data "$credentials" "$api/auth/register"
+```
+
+Log in to obtain an access token. After 15 minutes, enter your credentials again and repeat the login to get a new token.
+
+```bash
+token=$(curl -fsS -H 'Content-Type: application/json' --data "$credentials" "$api/auth/login" | jq -er '.accessToken')
+unset credentials
 jobs_api() {
-  curl --silent --show-error --fail --user "$api_user:$api_password" \
-    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" "$@"
+  curl --silent --show-error --fail -H "Authorization: Bearer $token" "$@"
 }
-csrf=$(jobs_api "$api/csrf")
-csrf_header=$(jq -er '.headerName + ": " + .token' <<< "$csrf")
 ```
 
-`GET /csrf` provides a token for the current session. Send the session cookie and the token header together on requests that change jobs. Create a job with:
+Submit a job using only its type. The API assigns ownership from the signed-in account and rejects a supplied `userId`.
 
 ```sh
-jobs_api -i "$api/jobs" -H "$csrf_header" \
+jobs_api -i "$api/jobs" \
   -H "Content-Type: application/json" \
-  -d '{"type":"email","userId":1}'
+  -d '{"type":"email"}'
 ```
 
-The response is `201 Created`; the `Location` header contains the job URL. Check a job:
+The response is `201 Created`. Use the ID in its `Location` header to check the job, replacing `JOB_ID` below.
 
 ```sh
-jobs_api "$api/jobs/1"
+jobs_api "$api/jobs/JOB_ID"
 ```
 
 Create a job that will reach the DLQ after retries:
 
 ```sh
-jobs_api "$api/jobs" -H "$csrf_header" \
+jobs_api "$api/jobs" \
   -H "Content-Type: application/json" \
-  -d '{"type":"fail","userId":1}'
+  -d '{"type":"fail"}'
 ```
 
-List failed jobs and resubmit one:
+List the failed jobs visible to your account.
 
 ```sh
 jobs_api "$api/jobs/failed"
-jobs_api -X POST "$api/jobs/retry-dlq/2" -H "$csrf_header"
 ```
 
-After trying the examples, run `rm -f "$cookie_jar"` and `unset api_password csrf csrf_header` in that shell.
+An administrator can resubmit a failed job with `POST /jobs/retry-dlq/{id}` and override a valid state transition with `PUT /jobs/{id}/status`. Clear the token with `unset token` when finished.
 
-The status endpoint is an administrative override. It accepts only valid state transitions and should not be used as the normal job-processing path.
+In PowerShell, sign in with an existing account and list its jobs using the following commands.
+
+```powershell
+$api = 'http://localhost:8080'
+$account = Get-Credential -Message 'Enter your scheduler login'
+$body = @{ username = $account.UserName; password = $account.GetNetworkCredential().Password } | ConvertTo-Json
+$login = Invoke-RestMethod -Method Post -Uri "$api/auth/login" -ContentType 'application/json; charset=utf-8' -Body $body
+Invoke-RestMethod -Uri "$api/jobs" -Headers @{ Authorization = "Bearer $($login.accessToken)" }
+Remove-Variable account, body, login
+```
 
 ## Configuration
 
-Set the required API login in `.env` for Compose or in environment variables when running the JAR directly. Keep the password private.
+Set `JOB_API_USERNAME` and `JOB_API_PASSWORD` for the initial administrator. For a new installation, we recommend a unique password of at least 12 characters. MySQL keeps the account after creation. Changing the password in `.env` does not reset an existing account.
+
+Set `JOB_JWT_SECRET` to a Base64-encoded 32-byte random key. Generate it once with `openssl rand -base64 32`, or run the following commands in PowerShell and copy the output into your local `.env`.
+
+```powershell
+$key = [byte[]]::new(32)
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($key)
+$rng.Dispose()
+[Convert]::ToBase64String($key)
+```
+
+Keep the password and signing key private. Reuse the same signing key across restarts and app instances. Rotating the key invalidates existing tokens.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `JOB_API_USERNAME` | Required | Username for the job API |
-| `JOB_API_PASSWORD` | Required | Password for the job API |
+| `JOB_API_USERNAME` | Required | Initial administrator username |
+| `JOB_API_PASSWORD` | Required | Initial administrator password |
+| `JOB_JWT_SECRET` | Required | Private Base64-encoded HS256 signing key |
 | `MYSQL_DATABASE` | `jobdb` | MySQL database name |
 | `MYSQL_USER` | `jobapp` | Application database user |
 | `MYSQL_PASSWORD` | `jobapp-local-password` | Application database password |

@@ -88,6 +88,7 @@ services:
     environment:
       JOB_API_USERNAME: ${JOB_API_USERNAME:?Set JOB_API_USERNAME in .env}
       JOB_API_PASSWORD: ${JOB_API_PASSWORD:?Set JOB_API_PASSWORD in .env}
+      JOB_JWT_SECRET: ${JOB_JWT_SECRET:?Set JOB_JWT_SECRET in .env}
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-jobdb}
       SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-jobapp}
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-jobapp-local-password}
