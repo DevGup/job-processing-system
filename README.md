@@ -111,6 +111,8 @@ Jobs created before account-based ownership have no verified owner. Only adminis
 | Prometheus UI | http://localhost:9090 |
 | Grafana UI | http://localhost:3000 |
 
+Open the [Job Scheduler dashboard](http://localhost:3000/d/job-scheduler/job-scheduler) and sign in with your Grafana account. Compose configures the dashboard and its Prometheus data source on startup. The three totals show jobs currently stored in MySQL. The chart shows created, completed, and failed events per minute, averaged over five minutes. If you change `GRAFANA_PORT`, use that port in the dashboard URL.
+
 Kafka, ZooKeeper, and MySQL remain internal to Docker. This prevents host-port conflicts and avoids exposing development credentials.
 
 ## API examples

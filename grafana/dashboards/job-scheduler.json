@@ -1,0 +1,145 @@
+{
+  "uid": "job-scheduler",
+  "title": "Job Scheduler",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Stored jobs",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "job-scheduler-prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(jobs_total_db_count{job=\"spring-boot-job-system\"})",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Completed jobs",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "job-scheduler-prom"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(jobs_done_db_count{job=\"spring-boot-job-system\"})",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Failed jobs",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "job-scheduler-prom"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(jobs_failed_db_count{job=\"spring-boot-job-system\"})",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Job activity per minute",
+      "description": "Average events per minute over the previous five minutes.",
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 24,
+        "h": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "job-scheduler-prom"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "60 * sum(rate(jobs_total{job=\"spring-boot-job-system\"}[5m]))",
+          "legendFormat": "Created",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "60 * sum(rate(jobs_processed_total{job=\"spring-boot-job-system\"}[5m]))",
+          "legendFormat": "Completed",
+          "range": true
+        },
+        {
+          "refId": "C",
+          "expr": "60 * sum(rate(jobs_failed_total{job=\"spring-boot-job-system\"}[5m]))",
+          "legendFormat": "Failed",
+          "range": true
+        }
+      ]
+    }
+  ]
+}
